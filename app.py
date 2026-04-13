@@ -525,7 +525,7 @@ async def analyze(
         
         # 11类 → 12类 映射
         if map_to_12_classes is not None:
-            violation_ids = map_to_12_classes(probs, sentence)
+            violation_ids = map_to_12_classes(probs)
         else:
             # Fallback: 使用概率最高的类别
             violation_ids = [f"I{max(0, i-1) + 1}" for i, p in enumerate(probs) if p > 0.5][:3]
