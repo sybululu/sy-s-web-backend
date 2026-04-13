@@ -173,79 +173,89 @@ def load_models():
         except Exception as e2:
             logger.error(f"分类模型 Fallback 也失败: {e2}")
     
-    # 3. 加载生成模型 (mT5 small)
+    # 3. 加载生成模型 (mT5 small) - 从你的HF仓库加载
     logger.info("-" * 30)
     logger.info("步骤2/2: 加载生成模型...")
     try:
-        from huggingface_hub import hf_hub_download
+        from huggingface_hub import hf_hub_download, list_repo_files
         
-        # 下载 checkpoint
-        gen_ckpt_path = hf_hub_download(
-            repo_id=REPO_ID,
-            filename="rewrite_mT5_small.ckpt",
-            token=HF_TOKEN or None
-        )
-        logger.info(f"生成模型 checkpoint 已下载: {gen_ckpt_path}")
+        # 检查你仓库里有哪些文件
+        files = list_repo_files(REPO_ID)
+        logger.info(f"仓库文件列表: {list(files)}")
         
-        # 加载 checkpoint
-        checkpoint = torch.load(gen_ckpt_path, map_location="cpu", weights_only=False)
-        logger.info(f"Checkpoint type: {type(checkpoint)}")
+        # 检查是否有直接可用的模型文件
+        has_safetensors = any("safetensors" in f for f in files)
+        has_bin = any("pytorch_model.bin" in f or "model.bin" in f for f in files)
+        has_ckpt = any(".ckpt" in f for f in files)
         
-        # 提取 state_dict
-        if isinstance(checkpoint, dict):
-            if "state_dict" in checkpoint:
-                state_dict = checkpoint["state_dict"]
-            elif "model_state_dict" in checkpoint:
-                state_dict = checkpoint["model_state_dict"]
+        logger.info(f"has_safetensors: {has_safetensors}, has_bin: {has_bin}, has_ckpt: {has_ckpt}")
+        
+        if has_safetensors or has_bin:
+            # 直接有模型文件，从仓库加载
+            logger.info("从仓库直接加载模型...")
+            model_status.model_generator = MT5ForConditionalGeneration.from_pretrained(REPO_ID)
+            model_status.tokenizer_generator = AutoTokenizer.from_pretrained(REPO_ID, legacy=False)
+            model_status.model_generator.eval()
+            model_status.generator_loaded = True
+            logger.info("生成模型加载成功!")
+        else:
+            # 只有checkpoint，需要特殊处理
+            logger.info("仓库只有checkpoint，使用checkpoint加载...")
+            
+            # 下载 checkpoint
+            ckpt_file = "rewrite_mT5_small.ckpt" if has_ckpt else "model.ckpt"
+            gen_ckpt_path = hf_hub_download(
+                repo_id=REPO_ID,
+                filename=ckpt_file,
+                token=HF_TOKEN or None
+            )
+            logger.info(f"Checkpoint 已下载: {gen_ckpt_path}")
+            
+            # 加载 checkpoint
+            checkpoint = torch.load(gen_ckpt_path, map_location="cpu", weights_only=False)
+            
+            # 提取 state_dict
+            if isinstance(checkpoint, dict):
+                if "state_dict" in checkpoint:
+                    state_dict = checkpoint["state_dict"]
+                elif "model_state_dict" in checkpoint:
+                    state_dict = checkpoint["model_state_dict"]
+                else:
+                    state_dict = checkpoint
             else:
                 state_dict = checkpoint
-            # 忽略 config，避免 BertConfig 干扰
-        else:
-            state_dict = checkpoint
-        
-        logger.info(f"State dict keys count: {len(state_dict) if isinstance(state_dict, dict) else 'N/A'}")
-        if isinstance(state_dict, dict):
-            logger.info(f"Sample keys: {list(state_dict.keys())[:5]}")
-        
-        # 清理键名前缀
-        cleaned_state_dict = {}
-        for k, v in state_dict.items():
-            new_k = k
-            for prefix in ["mt5.", "model.", "generator.", "decoder."]:
-                if new_k.startswith(prefix):
-                    new_k = new_k[len(prefix):]
-                    break
-            cleaned_state_dict[new_k] = v
-        
-        # 使用 google/mt5-small 默认配置创建模型
-        logger.info("创建 MT5-small 模型...")
-        config = AutoConfig.from_pretrained("google/mt5-small")
-        model = MT5ForConditionalGeneration(config)
-        
-        # 加载权重
-        logger.info("加载权重...")
-        missing, unexpected = model.load_state_dict(cleaned_state_dict, strict=False)
-        logger.info(f"Missing keys: {len(missing)}, Unexpected keys: {len(unexpected)}")
-        
-        model.eval()
-        model_status.model_generator = model
-        model_status.tokenizer_generator = AutoTokenizer.from_pretrained("google/mt5-small", legacy=False)
-        model_status.generator_loaded = True
-        logger.info("生成模型加载成功!")
+            
+            logger.info(f"State dict keys count: {len(state_dict)}")
+            
+            # 清理键名前缀
+            cleaned_state_dict = {}
+            for k, v in state_dict.items():
+                new_k = k
+                for prefix in ["mt5.", "model.", "generator.", "decoder.", "encoder."]:
+                    if new_k.startswith(prefix):
+                        new_k = new_k[len(prefix):]
+                        break
+                cleaned_state_dict[new_k] = v
+            
+            # 使用 google/mt5-small 配置创建模型
+            logger.info("创建 MT5-small 模型...")
+            config = AutoConfig.from_pretrained("google/mt5-small")
+            model = MT5ForConditionalGeneration(config)
+            
+            # 加载权重
+            missing, unexpected = model.load_state_dict(cleaned_state_dict, strict=False)
+            logger.info(f"Missing: {len(missing)}, Unexpected: {len(unexpected)}")
+            
+            model.eval()
+            model_status.model_generator = model
+            model_status.tokenizer_generator = AutoTokenizer.from_pretrained("google/mt5-small", legacy=False)
+            model_status.generator_loaded = True
+            logger.info("生成模型加载成功!")
         
     except Exception as e:
         logger.error(f"生成模型加载失败: {e}")
         import traceback
         traceback.print_exc()
-        # Fallback: 直接用预训练模型
-        try:
-            model_status.model_generator = MT5ForConditionalGeneration.from_pretrained("google/mt5-small")
-            model_status.tokenizer_generator = AutoTokenizer.from_pretrained("google/mt5-small", legacy=False)
-            model_status.model_generator.eval()
-            model_status.generator_loaded = True
-            logger.info("生成模型(Fallback)加载成功")
-        except Exception as e2:
-            logger.error(f"生成模型 Fallback 也失败: {e2}")
     
     logger.info("=" * 50)
     logger.info("模型加载完成!")
