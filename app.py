@@ -118,7 +118,8 @@ def load_models():
         logger.info(f"分类模型 checkpoint 已下载: {cls_ckpt_path}")
         
         # 加载 checkpoint (包含完整权重和结构)
-        checkpoint = torch.load(cls_ckpt_path, map_location="cpu", weights_only=True)
+        # 注意: PL checkpoint 包含 Lightning 结构，必须 weights_only=False
+        checkpoint = torch.load(cls_ckpt_path, map_location="cpu", weights_only=False)
         
         # 处理 checkpoint 格式
         if isinstance(checkpoint, dict):
@@ -188,7 +189,8 @@ def load_models():
         logger.info(f"生成模型 checkpoint 已下载: {gen_ckpt_path}")
         
         # 加载 checkpoint (包含完整权重和结构)
-        checkpoint = torch.load(gen_ckpt_path, map_location="cpu", weights_only=True)
+        # 注意: PL checkpoint 包含 Lightning 结构，必须 weights_only=False
+        checkpoint = torch.load(gen_ckpt_path, map_location="cpu", weights_only=False)
         
         # 处理 checkpoint 格式
         if isinstance(checkpoint, dict):
