@@ -177,80 +177,58 @@ def load_models():
     logger.info("-" * 30)
     logger.info("步骤2/2: 加载生成模型...")
     try:
-        from huggingface_hub import hf_hub_download, list_repo_files
+        from huggingface_hub import hf_hub_download
         
-        # 检查你仓库里有哪些文件
-        files = list_repo_files(REPO_ID)
-        logger.info(f"仓库文件列表: {list(files)}")
+        # 下载 checkpoint
+        gen_ckpt_path = hf_hub_download(
+            repo_id=REPO_ID,
+            filename="rewrite_mT5_small.ckpt",
+            token=HF_TOKEN or None
+        )
+        logger.info(f"Checkpoint 已下载: {gen_ckpt_path}")
         
-        # 检查是否有直接可用的模型文件
-        has_safetensors = any("safetensors" in f for f in files)
-        has_bin = any("pytorch_model.bin" in f or "model.bin" in f for f in files)
-        has_ckpt = any(".ckpt" in f for f in files)
+        # 加载 checkpoint - 只加载 state_dict，不加载其他内容
+        raw_ckpt = torch.load(gen_ckpt_path, map_location="cpu", weights_only=False)
+        logger.info(f"Checkpoint type: {type(raw_ckpt)}")
         
-        logger.info(f"has_safetensors: {has_safetensors}, has_bin: {has_bin}, has_ckpt: {has_ckpt}")
-        
-        if has_safetensors or has_bin:
-            # 直接有模型文件，从仓库加载
-            logger.info("从仓库直接加载模型...")
-            model_status.model_generator = MT5ForConditionalGeneration.from_pretrained(REPO_ID)
-            model_status.tokenizer_generator = AutoTokenizer.from_pretrained(REPO_ID, legacy=False)
-            model_status.model_generator.eval()
-            model_status.generator_loaded = True
-            logger.info("生成模型加载成功!")
-        else:
-            # 只有checkpoint，需要特殊处理
-            logger.info("仓库只有checkpoint，使用checkpoint加载...")
-            
-            # 下载 checkpoint
-            ckpt_file = "rewrite_mT5_small.ckpt" if has_ckpt else "model.ckpt"
-            gen_ckpt_path = hf_hub_download(
-                repo_id=REPO_ID,
-                filename=ckpt_file,
-                token=HF_TOKEN or None
-            )
-            logger.info(f"Checkpoint 已下载: {gen_ckpt_path}")
-            
-            # 加载 checkpoint
-            checkpoint = torch.load(gen_ckpt_path, map_location="cpu", weights_only=False)
-            
-            # 提取 state_dict
-            if isinstance(checkpoint, dict):
-                if "state_dict" in checkpoint:
-                    state_dict = checkpoint["state_dict"]
-                elif "model_state_dict" in checkpoint:
-                    state_dict = checkpoint["model_state_dict"]
-                else:
-                    state_dict = checkpoint
+        # 提取 state_dict (Lightning 格式)
+        if isinstance(raw_ckpt, dict):
+            if "state_dict" in raw_ckpt:
+                state_dict = {k.replace("model.", ""): v for k, v in raw_ckpt["state_dict"].items()}
+                logger.info("从 state_dict 提取")
+            elif "model_state_dict" in raw_ckpt:
+                state_dict = {k.replace("model.", ""): v for k, v in raw_ckpt["model_state_dict"].items()}
+                logger.info("从 model_state_dict 提取")
             else:
-                state_dict = checkpoint
-            
-            logger.info(f"State dict keys count: {len(state_dict)}")
-            
-            # 清理键名前缀
-            cleaned_state_dict = {}
-            for k, v in state_dict.items():
-                new_k = k
-                for prefix in ["mt5.", "model.", "generator.", "decoder.", "encoder."]:
-                    if new_k.startswith(prefix):
-                        new_k = new_k[len(prefix):]
-                        break
-                cleaned_state_dict[new_k] = v
-            
-            # 使用 google/mt5-small 配置创建模型
-            logger.info("创建 MT5-small 模型...")
-            config = AutoConfig.from_pretrained("google/mt5-small")
-            model = MT5ForConditionalGeneration(config)
-            
-            # 加载权重
-            missing, unexpected = model.load_state_dict(cleaned_state_dict, strict=False)
-            logger.info(f"Missing: {len(missing)}, Unexpected: {len(unexpected)}")
-            
-            model.eval()
-            model_status.model_generator = model
-            model_status.tokenizer_generator = AutoTokenizer.from_pretrained("google/mt5-small", legacy=False)
-            model_status.generator_loaded = True
-            logger.info("生成模型加载成功!")
+                # 可能是直接保存的 dict
+                state_dict = {k: v for k, v in raw_ckpt.items() if isinstance(v, torch.Tensor)}
+                logger.info(f"直接从 dict 提取 tensor，共 {len(state_dict)} 个")
+        else:
+            state_dict = raw_ckpt
+        
+        logger.info(f"权重数量: {len(state_dict)}")
+        logger.info(f"前5个键: {list(state_dict.keys())[:5]}")
+        
+        # 创建 MT5 模型（使用标准配置，忽略 ckpt 中的 config）
+        logger.info("创建 MT5-small 模型...")
+        config = AutoConfig.from_pretrained("google/mt5-small")
+        model = MT5ForConditionalGeneration(config)
+        
+        # 加载权重
+        logger.info("加载权重到模型...")
+        load_result = model.load_state_dict(state_dict, strict=False)
+        logger.info(f"加载完成 - 缺失: {len(load_result.missing_keys)}, 多余: {len(load_result.unexpected_keys)}")
+        
+        if load_result.missing_keys:
+            logger.info(f"缺失的键 (前5个): {load_result.missing_keys[:5]}")
+        if load_result.unexpected_keys:
+            logger.info(f"多余的键 (前5个): {load_result.unexpected_keys[:5]}")
+        
+        model.eval()
+        model_status.model_generator = model
+        model_status.tokenizer_generator = AutoTokenizer.from_pretrained("google/mt5-small", legacy=False)
+        model_status.generator_loaded = True
+        logger.info("生成模型加载成功!")
         
     except Exception as e:
         logger.error(f"生成模型加载失败: {e}")
