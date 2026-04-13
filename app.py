@@ -391,6 +391,12 @@ def roberta_predict(sentence: str) -> List[float]:
     if not isinstance(probs, list):
         probs = [probs]
     
+    # 调试日志：输出概率分布
+    logger.info(f"分类预测 - 句子: {sentence[:50]}...")
+    logger.info(f"概率分布: {probs}")
+    max_idx = probs.index(max(probs)) if probs else -1
+    logger.info(f"最高概率类别: {max_idx}, 概率: {probs[max_idx] if max_idx >= 0 else 0}")
+    
     return probs
 
 def get_legal_basis_from_rag(violation_type: str, context: Optional[str] = None) -> str:
@@ -627,7 +633,7 @@ async def rectify_snippet(
     
     # 计算diff
     dmp = diff_match_patch()
-    diffs = dmp.diff_main(request.snippet, suggested_text)
+    diffs = dmp.diff_main(request.original_snippet, suggested_text)
     dmp.diff_cleanupSemantic(diffs)
     
     # 生成HTML
