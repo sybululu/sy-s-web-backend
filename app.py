@@ -22,7 +22,7 @@ from fastapi.responses import Response, JSONResponse
 from sqlalchemy.orm import Session
 
 import torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, MT5ForConditionalGeneration, AutoConfig
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, MT5ForConditionalGeneration, AutoConfig, MT5Config
 from diff_match_patch import diff_match_patch
 
 from models import User, Project, get_db, init_db
@@ -208,9 +208,29 @@ def load_models():
         
         logger.info(f"清理后权重数量: {len(cleaned_state_dict)}")
         
-        # 使用 mT5-small 配置
-        logger.info("创建MT5-small模型...")
-        config = AutoConfig.from_pretrained(REPO_ID)
+        # mT5 模型需要 config 和 tokenizer
+        # checkpoint 只有权重，需要单独获取 config 和 tokenizer
+        logger.info("获取 mT5 config 和 tokenizer...")
+        
+        # 方法1: 尝试从本地仓库获取（如果用户上传了）
+        # 方法2: 用 HF_TOKEN 认证下载 google/mt5-small 的配置（文件很小）
+        
+        try:
+            # 尝试从自己的仓库加载
+            config = MT5Config.from_pretrained(REPO_ID)
+            tokenizer = AutoTokenizer.from_pretrained(REPO_ID, legacy=True)
+            logger.info("从自己的仓库加载 config/tokenizer 成功")
+        except:
+            # 用 token 认证下载 google/mt5-small 的配置
+            logger.info("从 google/mt5-small 加载 config/tokenizer...")
+            config = MT5Config.from_pretrained("google/mt5-small")
+            tokenizer = AutoTokenizer.from_pretrained(
+                "google/mt5-small", 
+                legacy=True,
+                use_auth_token=HF_TOKEN if HF_TOKEN else None
+            )
+            logger.info("config/tokenizer 加载成功")
+        
         model = MT5ForConditionalGeneration(config)
         
         # 加载权重
@@ -220,8 +240,7 @@ def load_models():
         
         model.eval()
         model_status.model_generator = model
-        # 从你自己的仓库加载 tokenizer
-        model_status.tokenizer_generator = AutoTokenizer.from_pretrained(REPO_ID, legacy=True)
+        model_status.tokenizer_generator = tokenizer  # 使用上面已加载的 tokenizer
         model_status.generator_loaded = True
         logger.info("生成模型加载成功!")
         
