@@ -276,13 +276,23 @@ app = FastAPI(
 
 # CORS 配置 - 允许前端域名访问
 ALLOWED_ORIGINS = [
-    "https://sy-s-web-3.pages.dev",  # Cloudflare Pages
+    "https://sy-s-web-3.pages.dev",  # Cloudflare Pages 主域名
     "http://localhost:5000",
     "http://localhost:5173",
 ]
+
+# Cloudflare Pages 预览域名检查函数
+def is_allowed_origin(origin: str) -> bool:
+    if origin in ALLOWED_ORIGINS:
+        return True
+    # 允许 Cloudflare Pages 预览域名 (*.sy-s-web-3.pages.dev)
+    if origin.endswith(".sy-s-web-3.pages.dev"):
+        return True
+    return False
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=r"https://[a-z0-9-]+\.sy-s-web-3\.pages\.dev|https://sy-s-web-3\.pages\.dev|http://localhost:\d+",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -346,7 +356,7 @@ class AnalyzeResponse(BaseModel):
     created_at: Optional[str] = None
 
 class RectifyRequest(BaseModel):
-    snippet: str = Field(..., min_length=5, description="违规条款原文")
+    original_snippet: str = Field(..., min_length=5, description="违规条款原文", alias="original_snippet")
     violation_type: str = Field(..., description="违规类型ID，如 I1")
 
 class UrlRequest(BaseModel):
@@ -581,7 +591,7 @@ async def rectify_snippet(
 ):
     """生成违规条款的整改建议"""
     # RAG 检索相关法律条款
-    legal_context = get_legal_basis_from_rag(request.violation_type, context=request.snippet)
+    legal_context = get_legal_basis_from_rag(request.violation_type, context=request.original_snippet)
     
     # 使用 mT5 生成整改建议
     if model_status.generator_loaded:
@@ -589,7 +599,7 @@ async def rectify_snippet(
 
 法律规范：{legal_context}
 
-违规条款：{request.snippet}
+违规条款：{request.original_snippet}
 
 整改后（保持原文风格，只修改违规内容）："""
         
