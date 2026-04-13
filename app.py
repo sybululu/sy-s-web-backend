@@ -285,10 +285,15 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# CORS 配置
+# CORS 配置 - 允许前端域名访问
+ALLOWED_ORIGINS = [
+    "https://sy-s-web-3.pages.dev",  # Cloudflare Pages
+    "http://localhost:5000",          # 本地开发
+    "http://localhost:5173",           # Vite 开发服务器
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 允许所有来源
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
