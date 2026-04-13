@@ -174,66 +174,20 @@ def load_models():
             logger.error(f"分类模型 Fallback 也失败: {e2}")
     
     # 3. 加载生成模型 (mT5 small)
-    # checkpoint 包含完整权重，直接加载即可
     logger.info("-" * 30)
     logger.info("步骤2/2: 加载生成模型...")
     try:
-        from huggingface_hub import hf_hub_download
-        
-        # 下载包含完整权重的 checkpoint
-        gen_ckpt_path = hf_hub_download(
-            repo_id=REPO_ID,
-            filename="rewrite_mT5_small.ckpt",
-            token=HF_TOKEN or None
-        )
-        logger.info(f"生成模型 checkpoint 已下载: {gen_ckpt_path}")
-        
-        # 加载 checkpoint (包含完整权重和结构)
-        # 注意: PL checkpoint 包含 Lightning 结构，必须 weights_only=False
-        checkpoint = torch.load(gen_ckpt_path, map_location="cpu", weights_only=False)
-        
-        # 处理 checkpoint 格式
-        if isinstance(checkpoint, dict):
-            if "state_dict" in checkpoint:
-                state_dict = checkpoint["state_dict"]
-            elif "model_state_dict" in checkpoint:
-                state_dict = checkpoint["model_state_dict"]
-            else:
-                state_dict = checkpoint
-            
-            # 清理键名前缀
-            cleaned_state_dict = {}
-            for k, v in state_dict.items():
-                new_k = k.replace("model.", "").replace("mt5.", "")
-                cleaned_state_dict[new_k] = v
-            state_dict = cleaned_state_dict
-        
-        # 从 checkpoint 获取配置，创建完整模型
-        if "config" in checkpoint:
-            config_dict = checkpoint["config"]
-            config = AutoConfig.from_dict(config_dict)
-        else:
-            # 使用默认配置
-            config = AutoConfig.from_pretrained(REPO_ID)
-        
-        # 直接创建 MT5 模型并加载权重
-        model_status.model_generator = MT5ForConditionalGeneration(config)
-        model_status.model_generator.load_state_dict(state_dict, strict=False)
+        # 直接从 google 加载预训练 mT5 模型
+        logger.info("正在加载预训练 mT5-small 模型...")
+        model_status.model_generator = MT5ForConditionalGeneration.from_pretrained("google/mt5-small")
+        model_status.tokenizer_generator = AutoTokenizer.from_pretrained("google/mt5-small", legacy=False)
         model_status.model_generator.eval()
-        
-        # 直接从 checkpoint 目录加载 tokenizer（不单独下载 base model）
-        try:
-            model_status.tokenizer_generator = AutoTokenizer.from_pretrained(REPO_ID, legacy=False)
-        except:
-            # Fallback: 使用通用 mT5 tokenizer
-            model_status.tokenizer_generator = AutoTokenizer.from_pretrained("google/mt5-small", legacy=False)
-        
         model_status.generator_loaded = True
         logger.info("生成模型加载成功!")
         
     except Exception as e:
         logger.error(f"生成模型加载失败: {e}")
-        # Fallback: 直接从 HF 加载完整模型
+        # Fallback: 尝试从本地 repo 加载
         try:
             model_status.model_generator = MT5ForConditionalGeneration.from_pretrained(REPO_ID)
             model_status.tokenizer_generator = AutoTokenizer.from_pretrained(REPO_ID, legacy=False)
