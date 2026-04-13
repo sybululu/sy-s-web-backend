@@ -189,6 +189,7 @@ def load_models():
         
         # 加载 checkpoint
         checkpoint = torch.load(gen_ckpt_path, map_location="cpu", weights_only=False)
+        logger.info(f"Checkpoint type: {type(checkpoint)}")
         
         # 提取 state_dict
         if isinstance(checkpoint, dict):
@@ -198,41 +199,33 @@ def load_models():
                 state_dict = checkpoint["model_state_dict"]
             else:
                 state_dict = checkpoint
+            # 忽略 config，避免 BertConfig 干扰
         else:
             state_dict = checkpoint
         
         logger.info(f"State dict keys count: {len(state_dict) if isinstance(state_dict, dict) else 'N/A'}")
-        
-        # 清理键名前缀 (mt5. 或 model.)
-        cleaned_state_dict = {}
-        prefix_to_remove = []
         if isinstance(state_dict, dict):
-            for k in state_dict.keys():
-                if k.startswith("mt5.") or k.startswith("model."):
-                    prefix_to_remove.append(k[:k.index(".", 5) if "." in k[5:] else len(k)])
-                    break
+            logger.info(f"Sample keys: {list(state_dict.keys())[:5]}")
         
+        # 清理键名前缀
+        cleaned_state_dict = {}
         for k, v in state_dict.items():
             new_k = k
-            for prefix in ["mt5.", "model.", "generator."]:
+            for prefix in ["mt5.", "model.", "generator.", "decoder."]:
                 if new_k.startswith(prefix):
                     new_k = new_k[len(prefix):]
                     break
             cleaned_state_dict[new_k] = v
         
-        # 使用默认的 MT5-small 配置创建模型
-        logger.info("使用默认 MT5-small 配置创建模型...")
+        # 使用 google/mt5-small 默认配置创建模型
+        logger.info("创建 MT5-small 模型...")
         config = AutoConfig.from_pretrained("google/mt5-small")
-        model = MT5ForConditionalGeneration.from_config(config)
+        model = MT5ForConditionalGeneration(config)
         
-        # 尝试加载权重
-        try:
-            model.load_state_dict(cleaned_state_dict, strict=False)
-            logger.info("权重加载成功!")
-        except Exception as load_err:
-            logger.warning(f"直接加载失败，尝试无严格匹配: {load_err}")
-            # 尝试只加载匹配的权重
-            model.load_state_dict(cleaned_state_dict, strict=False)
+        # 加载权重
+        logger.info("加载权重...")
+        missing, unexpected = model.load_state_dict(cleaned_state_dict, strict=False)
+        logger.info(f"Missing keys: {len(missing)}, Unexpected keys: {len(unexpected)}")
         
         model.eval()
         model_status.model_generator = model
