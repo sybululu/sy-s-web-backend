@@ -397,7 +397,7 @@ def get_legal_basis_from_rag(violation_type: str, context: Optional[str] = None)
         if results:
             legal_refs = []
             for result in results[:2]:
-                ref = f"{result.source} {result.article}"
+                ref = f"{result.law} {result.article_number}"
                 legal_refs.append(ref)
             return "；".join(legal_refs) if legal_refs else INDICATORS.get(
                 ID_TO_INDICATOR.get(violation_type, ""), {}
