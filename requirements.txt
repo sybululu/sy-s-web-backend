@@ -17,6 +17,8 @@ torch>=2.0.0
 transformers>=4.35.0
 sentence-transformers>=2.2.2
 pytorch-lightning>=2.0.0
+protobuf>=3.20.0
+sentencepiece>=0.1.99
 
 # Vector Store
 faiss-cpu>=1.7.4
