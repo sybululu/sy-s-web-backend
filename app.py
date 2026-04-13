@@ -61,14 +61,6 @@ HF_TOKEN = os.environ.get("HF_TOKEN", "")
 PORT = int(os.environ.get("PORT", 7860))
 REPO_ID = "sybululu/bert-moe"
 
-# CORS 配置 - 支持本地和Cloudflare Pages
-CORS_ORIGINS = [
-    "https://sy-s-web.pages.dev",
-    "http://localhost:3000",
-    "http://localhost:5173",
-    os.environ.get("FRONTEND_URL", ""),  # 可通过环境变量配置
-]
-
 # ==========================================
 # 模型加载状态
 # ==========================================
@@ -285,8 +277,8 @@ app = FastAPI(
 # CORS 配置 - 允许前端域名访问
 ALLOWED_ORIGINS = [
     "https://sy-s-web-3.pages.dev",  # Cloudflare Pages
-    "http://localhost:5000",          # 本地开发
-    "http://localhost:5173",           # Vite 开发服务器
+    "http://localhost:5000",
+    "http://localhost:5173",
 ]
 app.add_middleware(
     CORSMiddleware,
