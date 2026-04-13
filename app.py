@@ -228,7 +228,8 @@ def load_models():
         
         model.eval()
         model_status.model_generator = model
-        model_status.tokenizer_generator = AutoTokenizer.from_pretrained("google/mt5-small", legacy=False)
+        # 使用 legacy=True 避免 tiktoken 依赖问题
+        model_status.tokenizer_generator = AutoTokenizer.from_pretrained("google/mt5-small", legacy=True)
         model_status.generator_loaded = True
         logger.info("生成模型加载成功!")
         
