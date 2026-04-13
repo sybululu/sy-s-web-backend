@@ -1,0 +1,479 @@
+{
+  "_meta": {
+    "law_name": "信息安全技术 个人信息安全规范",
+    "law_name_en": "GB/T 35273-2020",
+    "effective_date": "2020-10-01",
+    "jurisdiction": "中国",
+    "version": "2.0"
+  },
+  "articles": [
+    {
+      "article_id": "GB-2020-5.1",
+      "article_number": "5.1 a)",
+      "title": "收集合法性要求",
+      "content": "权责一致原则——数据控制者应承担个人信息保护的主体责任，对个人信息的处理活动负责，并采取必要措施保障个人信息安全。",
+      "keywords": ["权责一致", "主体责任", "必要措施"],
+      "violation_types": ["I1"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "GB-2020-5.1b",
+      "article_number": "5.1 b)",
+      "title": "收集目的明确性",
+      "content": "目的明确原则——处理个人信息应具有明确、清晰的目的，不应进行违背法律法规和伦理道德目的的处理活动。",
+      "keywords": ["目的明确", "目的清晰", "目的限制"],
+      "violation_types": ["I2"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "GB-2020-5.1c",
+      "article_number": "5.1 c)",
+      "title": "收集最小必要",
+      "content": "最少够用原则——处理个人信息应采用对个人权益影响最小的方式，收集个人信息的类型、频率和数量应满足处理的最小需要。",
+      "keywords": ["最少够用", "最小必要", "频率控制"],
+      "violation_types": ["I1"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "GB-2020-5.1d",
+      "article_number": "5.1 d)",
+      "title": "收集公开透明",
+      "content": "公开透明原则——处理个人信息的活动应公开处理规则，明示处理目的、方式和范围。",
+      "keywords": ["公开透明", "处理规则", "明示告知"],
+      "violation_types": ["I2"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "GB-2020-5.1e",
+      "article_number": "5.1 e)",
+      "title": "收集知情可控",
+      "content": "知情可控原则——数据控制者应向个人信息主体告知处理个人信息的目的、方式、范围、规则等，并取得其同意。个人信息主体有权限制或拒绝他人对其个人信息进行处理。",
+      "keywords": ["知情可控", "取得同意", "限制权"],
+      "violation_types": ["I3", "I4"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "GB-2020-5.1f",
+      "article_number": "5.1 f)",
+      "title": "收集质量保证",
+      "content": "确保安全原则——数据控制者应具备与所面临安全风险相匹配的安全保障能力，建立有效的账户、权限和应急管理制度，防止个人信息的泄露、损毁和丢失。",
+      "keywords": ["安全保障", "风险匹配", "应急管理"],
+      "violation_types": ["I1"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "GB-2020-5.1g",
+      "article_number": "5.1 g)",
+      "title": "收集主体参与",
+      "content": "主体参与原则——数据控制者应向个人信息主体提供能够访问、更正、删除其个人信息，以及撤回同意、注销账户等参与个人信息处理的途径。",
+      "keywords": ["主体参与", "访问权", "更正权", "删除权"],
+      "violation_types": ["I9", "I10", "I11"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "GB-2020-5.2a",
+      "article_number": "5.2 a)",
+      "title": "收集授权同意-基本要求",
+      "content": "收集个人信息前，应向个人信息主体告知收集个人信息的目的，并事先取得个人信息主体的明确同意。",
+      "keywords": ["授权同意", "事先告知", "明确同意"],
+      "violation_types": ["I3"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "GB-2020-5.2b",
+      "article_number": "5.2 b)",
+      "title": "收集授权同意-隐私政策",
+      "content": "隐私政策应清晰、明确地告知个人信息控制者基本情况，包括主要处理者名称、联系方式等。",
+      "keywords": ["隐私政策", "清晰明确", "告知义务"],
+      "violation_types": ["I2"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "GB-2020-5.2c",
+      "article_number": "5.2 c)",
+      "title": "敏感信息单独授权",
+      "content": "收集身份证号、指纹、耳廓、面部识别特征等个人生物识别信息，以及疾病史、宗教信仰等个人敏感信息的，应确保单独授权同意。",
+      "keywords": ["生物识别", "单独授权", "敏感信息"],
+      "violation_types": ["I4"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "GB-2020-5.3a",
+      "article_number": "5.3 a)",
+      "title": "最小必要-类型限制",
+      "content": "收集的个人信息的类型应与实现产品或服务的业务功能有直接关联；直接关联是指没有该信息的参与，产品或服务的功能无法实现。",
+      "keywords": ["类型限制", "直接关联", "功能必需"],
+      "violation_types": ["I1"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "GB-2020-5.3b",
+      "article_number": "5.3 b)",
+      "title": "最小必要-数量限制",
+      "content": "自动采集个人信息的频率不应超过实现业务功能所必需的频率；间接获取个人信息(如从第三方采购)不应超过个人信息主体授权同意的范围。",
+      "keywords": ["数量限制", "频率限制", "间接获取"],
+      "violation_types": ["I1"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "GB-2020-5.3c",
+      "article_number": "5.3 c)",
+      "title": "最小必要-存储限制",
+      "content": "个人信息的存储时间应为其实现个人信息主体所同意的处理目的所必需的最短时间，除非法律法规另有规定。",
+      "keywords": ["存储限制", "最短时间", "存储期限"],
+      "violation_types": ["I7", "I8"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "GB-2020-5.4",
+      "article_number": "5.4",
+      "title": "收集授权同意-系统权限",
+      "content": "当产品或服务需获取用户设备操作系统权限时，应将权限申请与业务功能绑定，不应强制索取授权。",
+      "keywords": ["系统权限", "权限绑定", "不强制授权"],
+      "violation_types": ["I3"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "GB-2020-6.1a",
+      "article_number": "6.1 a)",
+      "title": "存储时间-最短期限",
+      "content": "个人信息保存期限应满足法律法规要求的最短保存时间要求；在法律法规未规定最短保存时间的情况下，个人信息保存时间不应超过实现处理目的所必需的时间。",
+      "keywords": ["最短期限", "法规要求", "必要时间"],
+      "violation_types": ["I7", "I8"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "GB-2020-6.1b",
+      "article_number": "6.1 b)",
+      "title": "存储时间-删除机制",
+      "content": "当个人信息超过保存期限时，应在合理期限内删除或匿名化处理个人信息；当产品或服务停止运营时，应对用户个人信息进行删除或匿名化处理。",
+      "keywords": ["删除机制", "停止运营", "匿名化"],
+      "violation_types": ["I9"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "GB-2020-6.2",
+      "article_number": "6.2",
+      "title": "存储去标识化",
+      "content": "当个人信息被标识化处理后，原则上不应再将其恢复为个人信息；在技术上确有必要恢复时，应采取安全措施并取得个人信息主体的单独同意。",
+      "keywords": ["去标识化", "恢复限制", "单独同意"],
+      "violation_types": ["I5", "I6"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "GB-2020-7.3",
+      "article_number": "7.3",
+      "title": "委托处理合规",
+      "content": "委托行为应事前签署合同，且合同内容应包括委托处理的目的、期限、方式、信息类型、保护措施及责任义务等。应对受托方进行监督，受托方不应转委托。",
+      "keywords": ["委托合同", "监督义务", "禁止转委托"],
+      "violation_types": ["I5", "I6"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "GB-2020-8.1",
+      "article_number": "8.1",
+      "title": "共享转让告知",
+      "content": "个人信息原则上不应共享、转让。如需共享、转让个人信息，应向个人信息主体告知共享、转让个人信息的目的、数据接收方类型，并取得个人信息主体的单独同意。",
+      "keywords": ["共享转让", "告知义务", "单独同意"],
+      "violation_types": ["I5", "I6"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "GB-2020-8.2",
+      "article_number": "8.2",
+      "title": "共享转让安全评估",
+      "content": "共享、转让经去标识化处理的个人信息，且确保数据接收方无法重新识别个人信息主体的，个人信息控制者可不事先征得同意，但应向个人信息主体告知去标识化情况。",
+      "keywords": ["去标识化共享", "事后告知"],
+      "violation_types": ["I2"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "GB-2020-8.3",
+      "article_number": "8.3",
+      "title": "共享转让记录",
+      "content": "个人信息控制者应准确记录和保存个人信息共享、转让的数据量、时间和流向。",
+      "keywords": ["转让记录", "数据流向", "记录保存"],
+      "violation_types": ["I8"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "GB-2020-8.4",
+      "article_number": "8.4",
+      "title": "收购合并处理",
+      "content": "当个人信息控制者发生收购、兼并、重组、破产等变更时，应向个人信息主体告知有关情况，并继续履行其与个人信息主体约定的义务。",
+      "keywords": ["收购兼并", "告知义务", "继续履行"],
+      "violation_types": ["I5"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "GB-2020-8.5",
+      "article_number": "8.5",
+      "title": "共享转让接收方义务",
+      "content": "接收方应在原约定范围内处理个人信息，确需扩大处理范围时，应重新取得个人信息主体的明示同意。",
+      "keywords": ["接收方义务", "范围限制", "重新同意"],
+      "violation_types": ["I5", "I6"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "GB-2020-8.6",
+      "article_number": "8.6",
+      "title": "共享转让变更告知",
+      "content": "接收方变更原处理目的、处理方式时，应依照本规范重新告知并取得个人信息主体的明示同意。",
+      "keywords": ["变更告知", "重新同意", "处理目的变更"],
+      "violation_types": ["I2", "I3"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "GB-2020-8.7",
+      "article_number": "8.7",
+      "title": "共享转让不用途限制",
+      "content": "个人信息控制者不得借用、借用或公开个人信息主体的个人信息。",
+      "keywords": ["借用禁止", "公开禁止"],
+      "violation_types": ["I5"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "GB-2020-8.8",
+      "article_number": "8.8",
+      "title": "跨境传输告知",
+      "content": "在中华人民共和国境内运营中收集和产生的个人信息，原则上应在境内存储。因业务需要确需出境的，应向个人信息主体告知境外接收方情况并取得单独同意。",
+      "keywords": ["跨境传输", "境内存储", "单独同意"],
+      "violation_types": ["I5", "I6"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "GB-2020-8.9",
+      "article_number": "8.9",
+      "title": "跨境传输安全评估",
+      "content": "个人信息跨境传输应通过国家网信部门组织的安全评估，或经专业机构进行个人信息保护认证，或与境外接收方订立合同约定权利义务。",
+      "keywords": ["安全评估", "保护认证", "合同约定"],
+      "violation_types": ["I5", "I6"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "GB-2020-8.10",
+      "article_number": "8.10",
+      "title": "跨境传输记录保存",
+      "content": "应记录跨境传输的个人信息类型、数量、传输时间、传输目的和境外接收方情况，并至少保存三年。",
+      "keywords": ["跨境记录", "保存期限", "三年"],
+      "violation_types": ["I8"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "GB-2020-9.1",
+      "article_number": "9.1",
+      "title": "个人信息主体权利-知情权",
+      "content": "个人信息主体应能查询个人信息控制者所保留的与该主体相关的个人信息。",
+      "keywords": ["知情权", "查询权"],
+      "violation_types": ["I10"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "GB-2020-9.2",
+      "article_number": "9.2",
+      "title": "个人信息主体权利-访问权",
+      "content": "个人信息主体应能通过合理方式访问其被留存的个人信息，并可获取其个人信息副本。",
+      "keywords": ["访问权", "获取副本"],
+      "violation_types": ["I10"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "GB-2020-9.3",
+      "article_number": "9.3",
+      "title": "个人信息主体权利-更正权",
+      "content": "当个人信息主体发现其个人信息不准确或不完整时，有权要求更正或补充。",
+      "keywords": ["更正权", "补充权"],
+      "violation_types": ["I10"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "GB-2020-9.4",
+      "article_number": "9.4",
+      "title": "个人信息主体权利-删除权",
+      "content": "在违反法律法规规定或违反约定处理个人信息时，个人信息主体有权要求删除。个人信息保存期限届满时，个人信息主体有权要求删除。",
+      "keywords": ["删除权", "违规删除", "期限届满删除"],
+      "violation_types": ["I9"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "GB-2020-9.5",
+      "article_number": "9.5",
+      "title": "个人信息主体权利-撤回同意权",
+      "content": "基于同意的个人信息处理，个人信息主体有权撤回其同意，且不应因此被限制或拒绝使用服务。",
+      "keywords": ["撤回同意", "撤回权"],
+      "violation_types": ["I9", "I11"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "GB-2020-9.6",
+      "article_number": "9.6",
+      "title": "个人信息主体权利-注销账户权",
+      "content": "个人信息主体应有权注销已注册的账户，且个人信息控制者不应保存已注销账户的相关个人信息。",
+      "keywords": ["注销权", "注销账户"],
+      "violation_types": ["I9"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "GB-2020-9.7",
+      "article_number": "9.7",
+      "title": "个人信息主体权利-获取说明权",
+      "content": "个人信息主体有权知悉个人信息处理规则变更的情况，并有权拒绝同意变更后的处理规则。",
+      "keywords": ["获取说明权", "规则变更"],
+      "violation_types": ["I2"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "GB-2020-10.1",
+      "article_number": "10.1",
+      "title": "安全措施-访问控制",
+      "content": "应建立安全管理制度，对个人信息实行分安全管理，对个人信息访问实行身份认证和权限控制。",
+      "keywords": ["访问控制", "身份认证", "权限控制"],
+      "violation_types": ["I1"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "GB-2020-10.2",
+      "article_number": "10.2",
+      "title": "安全措施-加密存储",
+      "content": "应采取加密措施和安全技术手段存储个人信息，防止个人信息泄露、损毁或丢失。",
+      "keywords": ["加密存储", "安全技术", "防泄露"],
+      "violation_types": ["I1"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "GB-2020-10.3",
+      "article_number": "10.3",
+      "title": "安全措施-安全事件处置",
+      "content": "发生或可能发生个人信息泄露、损毁时，应立即启动应急预案，及时告知用户并向有关主管部门报告。",
+      "keywords": ["安全事件", "应急处置", "及时告知"],
+      "violation_types": ["I2"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "GB-2020-11.1",
+      "article_number": "11.1",
+      "title": "个人信息保护负责人",
+      "content": "个人信息控制者应明确其组织架构中个人信息保护负责人的职位。个人信息保护负责人应具备足够的专业知识。",
+      "keywords": ["保护负责人", "专业知识"],
+      "violation_types": ["I1"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "GB-2020-11.2",
+      "article_number": "11.2",
+      "title": "个人信息保护负责人职责",
+      "content": "个人信息保护负责人应负责对个人信息处理活动进行监督，并应对个人信息安全事件进行响应。",
+      "keywords": ["负责人职责", "活动监督", "事件响应"],
+      "violation_types": ["I1"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "GB-2020-B",
+      "article_number": "附录B",
+      "title": "隐私政策内容要素",
+      "content": "隐私政策应包含以下要素：信息收集范围、信息使用目的、信息共享披露、信息安全保护、用户权利保障（访问、更正、删除、撤回同意）、儿童隐私保护、隐私政策变更通知、联系方式等。",
+      "keywords": ["隐私政策", "内容要素", "用户权利", "儿童保护"],
+      "violation_types": ["I2", "I8", "I10"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "GB-2020-C",
+      "article_number": "附录C",
+      "title": "隐私政策评估检查表",
+      "content": "评估隐私政策时应检查：是否清晰易懂、是否完整无遗漏、是否与实际处理活动一致、是否提供有效联系方式、是否及时更新等。",
+      "keywords": ["评估检查", "清晰易懂", "完整一致"],
+      "violation_types": ["I2"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "GB-2020-9.8",
+      "article_number": "9.8",
+      "title": "个人信息主体权利-响应时限",
+      "content": "个人信息控制者对个人信息主体提出的合理请求做出响应的时间不应超过15个工作日。对于无需延期的请求，应尽可能在10个工作日内完成。",
+      "keywords": ["响应时限", "15个工作日", "合理请求"],
+      "violation_types": ["I12"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "GB-2020-9.9",
+      "article_number": "9.9",
+      "title": "便捷投诉举报渠道",
+      "content": "个人信息控制者应建立便捷的投诉举报渠道，包括但不限于在线表单、客服电话、邮箱等，并公示处理时限承诺。",
+      "keywords": ["投诉举报", "便捷渠道", "处理时限"],
+      "violation_types": ["I11", "I12"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "GB-2020-9.10",
+      "article_number": "9.10",
+      "title": "投诉处理反馈",
+      "content": "对个人信息主体的投诉，应在规定时限内完成处理并向投诉人反馈处理结果。如无法在规定时限内完成，应告知投诉人原因及预计完成时间。",
+      "keywords": ["投诉处理", "反馈义务", "超时告知"],
+      "violation_types": ["I11", "I12"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "GB-2020-9.11",
+      "article_number": "9.11",
+      "title": "申诉机制",
+      "content": "个人信息主体对处理者答复不满意或处理者未在规定时限内答复的，个人信息主体有权向履行个人信息保护职责的部门进行申诉。",
+      "keywords": ["申诉机制", "部门申诉"],
+      "violation_types": ["I11"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "GB-2020-9.12",
+      "article_number": "9.12",
+      "title": "拒绝请求说明",
+      "content": "当拒绝个人信息主体的请求时，应告知拒绝的详细理由，并提供申诉途径。拒绝理由不应过于简单或模糊。",
+      "keywords": ["拒绝说明", "申诉途径", "详细理由"],
+      "violation_types": ["I12"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "GB-2020-9.13",
+      "article_number": "9.13",
+      "title": "权利请求费用",
+      "content": "对个人信息主体的请求，不得收取费用。对于多次重复或明显不合理的请求，可收取合理费用，但应事先告知收费标准。",
+      "keywords": ["费用收取", "重复请求", "收费标准"],
+      "violation_types": ["I11"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "GB-2020-9.14",
+      "article_number": "9.14",
+      "title": "身份核验",
+      "content": "在响应个人信息主体的请求前，应进行必要的身份核验，确保请求由本人或其授权代理人提出。身份核验不应过度收集个人信息。",
+      "keywords": ["身份核验", "本人请求", "授权代理"],
+      "violation_types": ["I10", "I11"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "GB-2020-12.1",
+      "article_number": "12.1",
+      "title": "隐私政策可理解性",
+      "content": "隐私政策应使用清晰、简洁的语言，避免使用过多专业术语，确保普通用户能够理解。字体大小不应过小，行间距应适当。",
+      "keywords": ["可理解性", "语言清晰", "格式规范"],
+      "violation_types": ["I2"],
+      "risk_level": "low"
+    },
+    {
+      "article_id": "GB-2020-12.2",
+      "article_number": "12.2",
+      "title": "隐私政策可发现性",
+      "content": "隐私政策应在产品或服务显著位置提供链接或入口，不得将隐私政策链接隐藏在次要位置或使用户难以发现。",
+      "keywords": ["可发现性", "显著位置", "链接入口"],
+      "violation_types": ["I2", "I11"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "GB-2020-12.3",
+      "article_number": "12.3",
+      "title": "隐私政策更新通知",
+      "content": "隐私政策发生重大变更时，应通过合理方式通知用户，包括但不限于弹窗、推送、邮件等，并提供用户查看新旧版本的途径。",
+      "keywords": ["更新通知", "重大变更", "版本对比"],
+      "violation_types": ["I2"],
+      "risk_level": "medium"
+    }
+  ]
+}

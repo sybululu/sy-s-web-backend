@@ -1,0 +1,416 @@
+{
+  "_meta": {
+    "law_name": "个人信息保护法",
+    "law_name_en": "Personal Information Protection Law",
+    "effective_date": "2021-11-01",
+    "jurisdiction": "中国",
+    "version": "2.0"
+  },
+  "articles": [
+    {
+      "article_id": "PIPL-006",
+      "article_number": "第六条",
+      "title": "收集个人信息的最小必要原则",
+      "content": "处理个人信息应当具有明确合理的目的，并且应当与处理目的直接相关，采取对个人权益影响最小的方式。收集个人信息的范围不得超过实现处理目的的最小必要范围。",
+      "keywords": ["最小必要", "处理目的", "影响最小", "收集范围"],
+      "violation_types": ["I1"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "PIPL-013",
+      "article_number": "第十三条",
+      "title": "处理个人信息的合法性依据",
+      "content": "符合下列情形之一的，个人信息处理者方可处理个人信息：（一）取得个人的同意；（二）为订立、履行个人作为一方当事人的合同所必需；（三）为履行法定职责或者法定义务所必需；（四）为应对突发公共卫生事件所必需；（五）为公共利益实施新闻报道、舆论监督等行为所必需；（六）法律、行政法规规定的其他情形。",
+      "keywords": ["合法性依据", "同意", "合同必需", "法定义务", "公共利益"],
+      "violation_types": ["I3"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "PIPL-014",
+      "article_number": "第十四条",
+      "title": "同意的要求",
+      "content": "基于个人同意处理个人信息的，该同意应当由个人在充分知情的前提下自愿、明确作出。个人信息处理者不得以个人不同意处理非必要个人信息为由拒绝提供产品或者服务。",
+      "keywords": ["充分知情", "自愿明确", "非必要信息", "拒绝服务"],
+      "violation_types": ["I3"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "PIPL-015",
+      "article_number": "第十五条",
+      "title": "同意的撤回",
+      "content": "基于个人同意处理个人信息的，个人有权撤回其同意。个人信息处理者应当提供便捷的撤回同意的方式。撤回同意，不影响撤回前基于个人同意已进行的个人信息处理活动的效力。",
+      "keywords": ["撤回同意", "撤回方式", "撤回效力"],
+      "violation_types": ["I9", "I11"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "PIPL-016",
+      "article_number": "第十六条",
+      "title": "不得拒绝服务",
+      "content": "个人信息处理者不得以个人不同意处理其个人信息为由拒绝向个人提供产品或者服务，或者处理对个人权益有重大影响的个人信息。",
+      "keywords": ["拒绝服务禁止", "重大影响"],
+      "violation_types": ["I3"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "PIPL-017",
+      "article_number": "第十七条",
+      "title": "个人信息处理规则告知",
+      "content": "个人信息处理者处理个人信息，应当在处理前公开下列事项：（一）个人信息处理者的名称或者姓名和联系方式；（二）个人信息的处理目的、处理方式，处理的个人信息种类、保存期限；（三）个人行使权利的方式和程序；（四）法律、行政法规规定应当告知的其他事项。",
+      "keywords": ["告知义务", "处理目的", "保存期限", "权利行使"],
+      "violation_types": ["I2", "I8"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "PIPL-018",
+      "article_number": "第十八条",
+      "title": "告知的简化",
+      "content": "个人信息处理者处理个人信息，有法律、行政法规规定应当保密或者不需要告知的情形的，可以不向个人告知前条规定的事项。紧急情况下为保护自然人的生命健康和财产安全无法及时告知的，应当在紧急情况消除后及时告知。",
+      "keywords": ["保密情形", "紧急告知"],
+      "violation_types": ["I2"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "PIPL-019",
+      "article_number": "第十九条",
+      "title": "个人信息保存期限",
+      "content": "个人信息的保存期限应当为实现处理目的所必要的最短时间。在法律、行政法规另有规定的情形下，个人信息保存期限可以超过该处理目的所必要的最短时间。",
+      "keywords": ["最短时间", "保存期限", "必要性"],
+      "violation_types": ["I7", "I8"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "PIPL-020",
+      "article_number": "第二十条",
+      "title": "个人信息的聚合",
+      "content": "个人信息的聚合是指通过收集、统计、推断等方式生成新的个人信息。聚合后的信息归属于个人信息处理者。",
+      "keywords": ["信息聚合", "统计推断"],
+      "violation_types": ["I1"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "PIPL-021",
+      "article_number": "第二十一条",
+      "title": "委托处理个人信息",
+      "content": "个人信息处理者委托处理个人信息的，应当与受托人约定处理目的、期限、方式、个人信息种类、保护措施以及双方权利义务，并对受托人的个人信息处理活动进行监督。受托人应当按照约定处理个人信息，不得超出约定的处理目的、处理方式等处理个人信息。",
+      "keywords": ["委托处理", "约定义务", "监督责任", "受托人义务"],
+      "violation_types": ["I5", "I6"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "PIPL-022",
+      "article_number": "第二十二条",
+      "title": "处理者变更告知",
+      "content": "个人信息处理者因合并、分立、解散、被宣告破产等原因需要转移个人信息的，应当向个人告知接收方的名称、联系方式。接收方应当继续履行个人信息处理者的义务。接收方变更原先的处理目的、处理方式的，应当依照本法规定重新取得个人同意。",
+      "keywords": ["接收方", "变更告知", "继续履行"],
+      "violation_types": ["I5"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "PIPL-023",
+      "article_number": "第二十三条",
+      "title": "向第三方提供个人信息",
+      "content": "个人信息处理者向其他个人信息处理者提供已处理的个人信息的，应当向个人告知接收方的名称、联系方式、处理目的、处理方式和个人信息种类，并取得个人的单独同意。",
+      "keywords": ["第三方提供", "单独同意", "告知接收方", "处理目的"],
+      "violation_types": ["I5", "I6"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "PIPL-024",
+      "article_number": "第二十四条",
+      "title": "自动化决策",
+      "content": "个人信息处理者利用个人信息进行自动化决策，应当保证决策的透明度和结果公平、公正，不得对个人在交易价格等交易条件上实行不合理的差别待遇。通过自动化决策方式作出对个人权益有重大影响的决定，个人有权要求个人信息处理者予以说明，并有权拒绝个人信息处理者仅通过自动化决策的方式作出决定。",
+      "keywords": ["自动化决策", "透明度", "公平公正", "差别待遇", "拒绝权"],
+      "violation_types": ["I1"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "PIPL-025",
+      "article_number": "第二十五条",
+      "title": "公共场所图像采集",
+      "content": "在公共场所安装图像采集、个人信息识别设备，应当为维护公共安全所必需，遵守国家有关规定，并设置显著的提示标识。",
+      "keywords": ["公共场所", "图像采集", "显著提示", "公共安全"],
+      "violation_types": ["I1", "I2"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "PIPL-026",
+      "article_number": "第二十六条",
+      "title": "公共场所数据处理",
+      "content": "所收集的个人图像、身份识别信息用于维护公共安全以外的目的，应当取得个人单独同意。",
+      "keywords": ["图像识别", "单独同意", "维护公共安全"],
+      "violation_types": ["I4"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "PIPL-027",
+      "article_number": "第二十七条",
+      "title": "已公开信息处理",
+      "content": "个人信息处理者处理已公开的个人信息，应当符合该个人信息被公开时的用途。超出与该用途相关的合法利益的合理范围的，个人信息处理者应当主动或者根据个人的请求删除、屏蔽相关内容。",
+      "keywords": ["已公开信息", "合理用途", "删除请求"],
+      "violation_types": ["I9"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "PIPL-028",
+      "article_number": "第二十八条",
+      "title": "敏感个人信息定义",
+      "content": "敏感个人信息是一旦泄露或者非法使用，容易导致自然人的人格尊严受到侵害或者人身、财产安全受到危害的个人信息，包括生物识别、宗教信仰、特定身份、医疗健康、金融账户、行踪轨迹等信息，以及不满十四周岁未成年人的个人信息。",
+      "keywords": ["敏感信息", "生物识别", "医疗健康", "金融账户", "行踪轨迹", "未成年人"],
+      "violation_types": ["I4"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "PIPL-029",
+      "article_number": "第二十九条",
+      "title": "处理敏感个人信息单独同意",
+      "content": "处理敏感个人信息应当取得个人的单独同意。法律、行政法规规定处理敏感个人信息应当取得书面同意的，从其规定。",
+      "keywords": ["单独同意", "书面同意", "敏感信息"],
+      "violation_types": ["I4"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "PIPL-030",
+      "article_number": "第三十条",
+      "title": "敏感信息告知义务",
+      "content": "个人信息处理者处理敏感个人信息的，除本法第十七条规定的事项外，还应当向个人告知处理敏感个人信息的必要性以及对个人权益的影响。",
+      "keywords": ["敏感信息告知", "必要性", "权益影响"],
+      "violation_types": ["I2", "I4"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "PIPL-031",
+      "article_number": "第三十一条",
+      "title": "未成年人信息处理",
+      "content": "个人信息处理者处理不满十四周岁未成年人个人信息的，应当取得未成年人的父母或者其他监护人的同意，并制定专门的个人信息处理规则。",
+      "keywords": ["未成年人", "监护人同意", "专门规则"],
+      "violation_types": ["I4"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "PIPL-032",
+      "article_number": "第三十二条",
+      "title": "敏感信息处理限制",
+      "content": "法律、行政法规规定处理敏感个人信息应当取得相关行政许可或者作出其他限制的，依照其规定。",
+      "keywords": ["行政许可", "处理限制"],
+      "violation_types": ["I4"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "PIPL-033",
+      "article_number": "第三十三条",
+      "title": "境外提供告知",
+      "content": "个人信息处理者向中华人民共和国境外提供个人信息的，应当向个人告知境外接收方的情况，并取得个人的单独同意。",
+      "keywords": ["境外提供", "单独同意", "境外接收方"],
+      "violation_types": ["I5", "I6"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "PIPL-034",
+      "article_number": "第三十四条",
+      "title": "国家机关处理个人信息",
+      "content": "国家机关为履行法定职责处理个人信息，应当依照法律、行政法规规定的权限和程序进行，不得超出履行法定职责所必需的范围和限度。",
+      "keywords": ["国家机关", "法定职责", "最小必要"],
+      "violation_types": ["I1"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "PIPL-035",
+      "article_number": "第三十五条",
+      "title": "个人信息查阅权",
+      "content": "个人请求查阅、复制其个人信息的，个人信息处理者应当及时提供。个人请求更正、补充其个人信息的，个人信息处理者应当及时更正、补充。",
+      "keywords": ["查阅权", "复制权", "及时提供"],
+      "violation_types": ["I10"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "PIPL-036",
+      "article_number": "第三十六条",
+      "title": "个人信息可携带权",
+      "content": "个人请求将其个人信息转移至其指定的个人信息处理者的，个人信息处理者应当提供转移的途径。",
+      "keywords": ["可携带权", "转移途径"],
+      "violation_types": ["I10"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "PIPL-037",
+      "article_number": "第三十七条",
+      "title": "逝者信息处理",
+      "content": "自然人死亡的，其近亲属为了自身的合法、正当利益，可以对死者的相关个人信息行使本法规定的查阅、复制、更正、删除等权利。",
+      "keywords": ["逝者信息", "近亲属权利"],
+      "violation_types": ["I10"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "PIPL-038",
+      "article_number": "第三十八条",
+      "title": "个人信息删除权",
+      "content": "有下列情形之一的，个人信息处理者应当主动删除个人信息；个人信息处理者未删除的，个人有权请求删除：（一）处理目的已实现、无法实现或者为实现处理目的不再需要；（二）个人信息处理者停止提供产品或者服务；（三）个人撤回同意；（四）个人信息处理者违反法律、行政法规或者违反约定处理个人信息；（五）法律、行政法规规定的其他情形。",
+      "keywords": ["删除权", "撤回同意", "停止服务", "违法处理", "主动删除"],
+      "violation_types": ["I9"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "PIPL-039",
+      "article_number": "第三十九条",
+      "title": "投诉举报权",
+      "content": "个人信息处理者应当建立便捷的个人信息主体行使权利的申请受理和处理机制。个人请求更正、补充其个人信息的，个人信息处理者应当及时更正、补充。",
+      "keywords": ["投诉举报", "申请受理", "处理机制"],
+      "violation_types": ["I11"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "PIPL-040",
+      "article_number": "第四十条",
+      "title": "响应时限",
+      "content": "个人信息处理者承诺的期限应当不超过十五个工作日。拒绝个人行使权利的请求的，应当说明理由。",
+      "keywords": ["响应时限", "十五个工作日", "说明理由"],
+      "violation_types": ["I12"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "PIPL-041",
+      "article_number": "第四十一条",
+      "title": "权利限制",
+      "content": "个人请求查阅、复制、更正、补充、删除其个人信息，或者请求转移其个人信息的，个人信息处理者应当根据个人请求的内容和性质，采取对个人权益影响最小的方式进行处理。",
+      "keywords": ["权利限制", "影响最小"],
+      "violation_types": ["I10"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "PIPL-042",
+      "article_number": "第四十二条",
+      "title": "安全技术措施总则",
+      "content": "个人信息处理者应当根据个人信息的处理目的、处理方式、个人信息的种类以及对个人权益的影响、可能存在的安全风险，采取相应的加密、去标识化等安全技术措施。",
+      "keywords": ["安全技术措施", "加密", "去标识化"],
+      "violation_types": ["I1"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "PIPL-043",
+      "article_number": "第四十三条",
+      "title": "内部管理制度",
+      "content": "个人信息处理者应当制订内部管理制度和操作规程，对个人信息实行分级分类管理，合理确定操作权限。",
+      "keywords": ["内部管理", "分级分类", "权限管理"],
+      "violation_types": ["I1"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "PIPL-044",
+      "article_number": "第四十四条",
+      "title": "安全教育培训",
+      "content": "个人信息处理者应当定期对从业人员进行安全教育和培训，制定并组织实施个人信息安全事件应急预案。",
+      "keywords": ["安全培训", "应急预案", "安全教育"],
+      "violation_types": ["I1"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "PIPL-045",
+      "article_number": "第四十五条",
+      "title": "安全审计",
+      "content": "个人信息处理者应当定期对其个人信息处理活动以及采用的保护措施等进行审计。",
+      "keywords": ["安全审计", "定期审计"],
+      "violation_types": ["I1"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "PIPL-046",
+      "article_number": "第四十六条",
+      "title": "个人信息保护负责人",
+      "content": "个人信息处理者应当指定个人信息保护负责人。个人信息保护负责人应当具备相关专业知识。",
+      "keywords": ["保护负责人", "专业知识"],
+      "violation_types": ["I1"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "PIPL-047",
+      "article_number": "第四十七条",
+      "title": "个人信息保护影响评估",
+      "content": "有下列情形之一的，个人信息处理者应当事前进行个人信息保护影响评估：（一）处理敏感个人信息；（二）利用个人信息进行自动化决策；（三）委托处理个人信息、向第三方提供个人信息、跨境提供个人信息；（四）其他对个人权益有重大影响的个人信息处理活动。",
+      "keywords": ["影响评估", "敏感信息", "自动化决策", "跨境传输", "重大影响"],
+      "violation_types": ["I4"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "PIPL-048",
+      "article_number": "第四十八条",
+      "title": "影响评估内容",
+      "content": "个人信息保护影响评估应当包括下列内容：（一）个人信息的处理目的、处理方式等是否符合法律、行政法规的规定；（二）所采取的保护措施是否合法、有效并与风险程度相适应。",
+      "keywords": ["评估内容", "合法性", "有效性"],
+      "violation_types": ["I4"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "PIPL-049",
+      "article_number": "第四十九条",
+      "title": "影响评估记录",
+      "content": "个人信息保护影响评估报告和处理情况记录应当至少保存三年。",
+      "keywords": ["保存期限", "三年", "记录保存"],
+      "violation_types": ["I8"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "PIPL-050",
+      "article_number": "第五十条",
+      "title": "安全事件告知义务",
+      "content": "个人信息处理者应当立即采取处置措施，及时告知用户并向有关主管部门报告。告知内容应当包括：（一）安全事件的基本情况；（二）可能的影响；（三）已采取的处置措施。",
+      "keywords": ["安全事件", "及时告知", "报告义务"],
+      "violation_types": ["I2"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "PIPL-051",
+      "article_number": "第五十一条",
+      "title": "委托处理合规",
+      "content": "委托处理个人信息的，受托人应当按照约定处理个人信息，不得将委托处理的活动转委托给第三方。",
+      "keywords": ["转委托禁止", "受托人义务"],
+      "violation_types": ["I5"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "PIPL-052",
+      "article_number": "第五十二条",
+      "title": "跨境提供条件",
+      "content": "个人信息处理者确需向中华人民共和国境外提供个人信息的，应当具备下列条件之一：（一）通过国家网信部门组织的安全评估；（二）经专业机构进行个人信息保护认证；（三）与境外接收方订立合同约定权利义务。",
+      "keywords": ["跨境提供", "安全评估", "保护认证", "合同约定"],
+      "violation_types": ["I5", "I6"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "PIPL-053",
+      "article_number": "第五十三条",
+      "title": "境外接收方义务",
+      "content": "境外接收方应当履行与个人信息处理者约定的义务，不得超越约定范围处理个人信息。",
+      "keywords": ["境外接收方", "约定义务", "超越禁止"],
+      "violation_types": ["I5"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "PIPL-054",
+      "article_number": "第五十四条",
+      "title": "小型处理者免责",
+      "content": "个人信息处理者不满一百人的，小型个人信息处理者可以不自制定个人信息处理规则，但应当对处理活动进行记录。",
+      "keywords": ["小型处理者", "记录义务"],
+      "violation_types": ["I2"],
+      "risk_level": "low"
+    },
+    {
+      "article_id": "PIPL-055",
+      "article_number": "第五十五条",
+      "title": "拒绝自动化决策",
+      "content": "通过自动化决策方式作出对个人权益有重大影响的决定，个人有权要求个人信息处理者予以说明，并有权拒绝个人信息处理者仅通过自动化决策的方式作出决定。",
+      "keywords": ["拒绝自动化", "重大决定", "说明义务"],
+      "violation_types": ["I1"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "PIPL-056",
+      "article_number": "第五十六条",
+      "title": "大型平台特殊义务",
+      "content": "提供重要互联网平台服务、用户数量巨大的个人信息处理者，应当设立主要由外部成员组成的独立机构，对个人信息处理活动进行监督。",
+      "keywords": ["大型平台", "独立监督", "外部成员"],
+      "violation_types": ["I1"],
+      "risk_level": "high"
+    }
+  ]
+}

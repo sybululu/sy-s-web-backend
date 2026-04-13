@@ -1,0 +1,36 @@
+{
+  "version": "1.0.0",
+  "last_updated": "2026-04-12",
+  "description": "法律知识库元数据",
+  "laws": [
+    {
+      "name": "个人信息保护法",
+      "abbreviation": "PIPL",
+      "file": "personal_info_law.json",
+      "article_count": 12
+    },
+    {
+      "name": "数据安全法",
+      "abbreviation": "DSL",
+      "file": "data_security_law.json",
+      "article_count": 2
+    },
+    {
+      "name": "网络安全法",
+      "abbreviation": "CSL",
+      "file": "cybersecurity_law.json",
+      "article_count": 3
+    },
+    {
+      "name": "GB/T 35273-2020",
+      "abbreviation": "GB",
+      "file": "gb35273_2020.json",
+      "article_count": 3
+    }
+  ],
+  "coverage": {
+    "total_laws": 4,
+    "total_articles": 20,
+    "violation_types_covered": 12
+  }
+}

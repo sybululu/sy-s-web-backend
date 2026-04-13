@@ -1,0 +1,164 @@
+{
+  "_meta": {
+    "description": "12种违规类型与法律条款的映射关系",
+    "version": "1.0",
+    "source": "基于浙大CAPP-130 Dataset"
+  },
+  "mappings": {
+    "I1": {
+      "name": "收集范围超出必要",
+      "category": "Information Collection",
+      "primary_laws": [
+        {"law": "PIPL", "article": "第六条"},
+        {"law": "CSL", "article": "第四十一条"}
+      ],
+      "keywords": ["最小必要", "服务无关", "超范围收集", "自动化决策"],
+      "examples": {
+        "violation": "收集用户的通讯录、通话记录等与服务无关的信息",
+        "compliant": "仅收集用户注册所必需的手机号码和验证码"
+      }
+    },
+    "I2": {
+      "name": "未明确收集目的",
+      "category": "Information Collection",
+      "primary_laws": [
+        {"law": "PIPL", "article": "第十七条"}
+      ],
+      "keywords": ["处理目的", "使用目的", "收集目的", "告知义务"],
+      "examples": {
+        "violation": "收集用户位置信息用于'改善服务'",
+        "compliant": "收集用户位置信息用于提供就近商家推荐服务"
+      }
+    },
+    "I3": {
+      "name": "未获得用户同意",
+      "category": "Authorization",
+      "primary_laws": [
+        {"law": "PIPL", "article": "第十三条"},
+        {"law": "PIPL", "article": "第十四条"},
+        {"law": "CSL", "article": "第四十一条"}
+      ],
+      "keywords": ["同意", "授权", "默认勾选", "捆绑授权"],
+      "examples": {
+        "violation": "默认勾选用户协议，直接收集用户信息",
+        "compliant": "用户主动点击同意按钮后方可收集信息"
+      }
+    },
+    "I4": {
+      "name": "收集敏感信息未单独告知",
+      "category": "Information Collection",
+      "primary_laws": [
+        {"law": "PIPL", "article": "第二十八条"},
+        {"law": "PIPL", "article": "第二十九条"}
+      ],
+      "keywords": ["敏感信息", "生物识别", "医疗健康", "金融账户", "单独同意"],
+      "examples": {
+        "violation": "在隐私政策中简单提及即收集用户的健康数据",
+        "compliant": "显著提示并获取用户对健康数据收集的单独同意"
+      }
+    },
+    "I5": {
+      "name": "共享第三方未告知",
+      "category": "Sharing and Disclosure",
+      "primary_laws": [
+        {"law": "PIPL", "article": "第十七条"},
+        {"law": "PIPL", "article": "第二十三条"},
+        {"law": "CSL", "article": "第四十二条"}
+      ],
+      "keywords": ["第三方共享", "接收方", "告知义务"],
+      "examples": {
+        "violation": "未披露与广告合作伙伴共享用户数据的情况",
+        "compliant": "明确列出共享的第三方名称、处理目的和共享信息类型"
+      }
+    },
+    "I6": {
+      "name": "共享第三方未获同意",
+      "category": "Sharing and Disclosure",
+      "primary_laws": [
+        {"law": "PIPL", "article": "第二十三条"},
+        {"law": "CSL", "article": "第四十二条"}
+      ],
+      "keywords": ["单独同意", "第三方共享", "明示同意"],
+      "examples": {
+        "violation": "将用户信息共享给广告商作为默认选项",
+        "compliant": "提供单独的选项让用户选择是否同意第三方共享"
+      }
+    },
+    "I7": {
+      "name": "留存期限不合理",
+      "category": "Storage",
+      "primary_laws": [
+        {"law": "PIPL", "article": "第十九条"}
+      ],
+      "keywords": ["保存期限", "最短时间", "永久保存"],
+      "examples": {
+        "violation": "用户注销账户后仍永久保留用户数据",
+        "compliant": "用户注销后保存必要信息最多30天，之后完全删除"
+      }
+    },
+    "I8": {
+      "name": "未明确留存期限",
+      "category": "Storage",
+      "primary_laws": [
+        {"law": "PIPL", "article": "第十七条"},
+        {"law": "PIPL", "article": "第十九条"}
+      ],
+      "keywords": ["保存期限", "告知义务", "时间限制"],
+      "examples": {
+        "violation": "隐私政策中写'根据法律规定保存'但不说明具体期限",
+        "compliant": "明确说明各类信息的保存期限：账号信息10年，交易记录5年等"
+      }
+    },
+    "I9": {
+      "name": "未提供删除途径",
+      "category": "Management",
+      "primary_laws": [
+        {"law": "PIPL", "article": "第四十七条"},
+        {"law": "CSL", "article": "第四十三条"}
+      ],
+      "keywords": ["删除权", "注销账户", "删除途径"],
+      "examples": {
+        "violation": "用户无法注销账户或找不到删除个人信息的入口",
+        "compliant": "提供账户设置页面的删除入口，30日内完成删除"
+      }
+    },
+    "I10": {
+      "name": "未明确权利范围",
+      "category": "Management",
+      "primary_laws": [
+        {"law": "PIPL", "article": "第四十四条"},
+        {"law": "PIPL", "article": "第四十五条"},
+        {"law": "PIPL", "article": "第五十条"}
+      ],
+      "keywords": ["查阅权", "复制权", "更正权", "删除权", "权利告知"],
+      "examples": {
+        "violation": "隐私政策未详细说明用户享有哪些具体权利",
+        "compliant": "逐项列举查阅、复制、更正、删除等权利及行使方式"
+      }
+    },
+    "I11": {
+      "name": "未提供便捷途径",
+      "category": "Management",
+      "primary_laws": [
+        {"law": "PIPL", "article": "第五十条"}
+      ],
+      "keywords": ["申请渠道", "便捷性", "投诉入口", "客服"],
+      "examples": {
+        "violation": "用户申请删除数据需要发送邮件且等待30天以上",
+        "compliant": "提供在线表单，15个工作日内完成处理"
+      }
+    },
+    "I12": {
+      "name": "未明确响应时限",
+      "category": "Management",
+      "primary_laws": [
+        {"law": "PIPL", "article": "第五十条"}
+      ],
+      "keywords": ["响应时限", "十五个工作日", "说明理由"],
+      "examples": {
+        "violation": "对用户的权利请求不予回应或无限期拖延",
+        "compliant": "承诺并在隐私政策中明示15个工作日内响应"
+      }
+    }
+  }
+}

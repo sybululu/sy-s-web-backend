@@ -1,0 +1,10 @@
+{
+  "title": "隐私政策合规审查",
+  "emoji": "🔒",
+  "colorFrom": "blue",
+  "colorTo": "green",
+  "sdk": "docker",
+  "app_port": 7860,
+  "python_version": "3.10",
+  "description": "基于 BERT-MoE 和 RAG 的隐私政策合规审查系统"
+}

@@ -1,0 +1,173 @@
+{
+  "_meta": {
+    "law_name": "网络安全法",
+    "law_name_en": "Cybersecurity Law",
+    "effective_date": "2017-06-01",
+    "jurisdiction": "中国",
+    "version": "2.0"
+  },
+  "articles": [
+    {
+      "article_id": "CSL-040",
+      "article_number": "第四十条",
+      "title": "用户信息保护原则",
+      "content": "网络运营者应当对其收集的用户信息严格保密，并建立健全用户信息保护制度。",
+      "keywords": ["保密义务", "保护制度", "用户信息"],
+      "violation_types": ["I1"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "CSL-041",
+      "article_number": "第四十一条",
+      "title": "用户信息收集原则",
+      "content": "网络运营者收集、使用个人信息，应当遵循合法、正当、必要的原则，公开收集、使用规则，明示收集、使用信息的目的、方式和范围，并经被收集者同意。网络运营者不得收集与其提供的服务无关的个人信息。",
+      "keywords": ["收集原则", "必要性", "明示同意", "无关信息", "公开规则"],
+      "violation_types": ["I1", "I2", "I3"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "CSL-042",
+      "article_number": "第四十二条",
+      "title": "信息保护与共享限制",
+      "content": "网络运营者不得泄露、篡改、毁损其收集的个人信息；未经被收集者同意，不得向他人提供个人信息。但是，经过处理无法识别特定个人且不能复原的除外。网络运营者应当采取技术措施和其他必要措施，确保其收集的个人信息安全。",
+      "keywords": ["信息安全", "泄露禁止", "匿名化", "技术措施", "未经同意禁止提供"],
+      "violation_types": ["I5", "I6"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "CSL-043",
+      "article_number": "第四十三条",
+      "title": "用户删除权",
+      "content": "个人发现网络运营者违反法律、行政法规的规定或者双方的约定收集、使用其个人信息的，有权要求网络运营者删除其个人信息。",
+      "keywords": ["删除权", "用户权利", "违法收集", "违约收集"],
+      "violation_types": ["I9"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "CSL-044",
+      "article_number": "第四十四条",
+      "title": "禁止非法获取个人信息",
+      "content": "任何个人和组织不得窃取或者以其他非法方式获取个人信息，不得非法出售或者非法向他人提供个人信息。",
+      "keywords": ["非法获取禁止", "非法出售禁止", "非法提供禁止"],
+      "violation_types": ["I3"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "CSL-045",
+      "article_number": "第四十五条",
+      "title": "依法追究责任",
+      "content": "依法负有网络安全监督管理职责的部门及其工作人员，必须对在履行职责中知悉的个人信息、隐私和商业秘密严格保密，不得泄露、出售或者非法向他人提供。",
+      "keywords": ["保密义务", "监管人员", "禁止泄露"],
+      "violation_types": ["I5"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "CSL-046",
+      "article_number": "第四十六条",
+      "title": "网络安全等级保护",
+      "content": "网络运营者应当按照网络安全等级保护制度的要求，制定内部安全管理制度和操作规程，确定网络安全负责人，落实网络安全保护责任。",
+      "keywords": ["等级保护", "管理制度", "安全负责人"],
+      "violation_types": ["I1"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "CSL-047",
+      "article_number": "第四十七条",
+      "title": "网络安全技术措施",
+      "content": "网络运营者应当采取技术措施，防范计算机病毒和网络攻击、网络侵入等网络安全风险。",
+      "keywords": ["技术措施", "病毒防范", "攻击防范"],
+      "violation_types": ["I1"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "CSL-048",
+      "article_number": "第四十八条",
+      "title": "日志记录与留存",
+      "content": "网络运营者应当采取监测、记录网络运行状态、网络安全事件的技术措施，并按照规定留存相关的网络日志不少于六个月。",
+      "keywords": ["日志记录", "留存期限", "六个月"],
+      "violation_types": ["I7", "I8"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "CSL-049",
+      "article_number": "第四十九条",
+      "title": "网络安全应急预案",
+      "content": "网络运营者应当制定网络安全事件应急预案，及时处置安全风险。",
+      "keywords": ["应急预案", "安全事件", "风险处置"],
+      "violation_types": ["I1"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "CSL-050",
+      "article_number": "第五十条",
+      "title": "安全事件报告制度",
+      "content": "网络安全事件发生的，应当立即启动网络安全事件应急预案，按照规定向有关主管部门报告。",
+      "keywords": ["安全事件", "报告制度", "及时报告"],
+      "violation_types": ["I2"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "CSL-051",
+      "article_number": "第五十一条",
+      "title": "数据本地化要求",
+      "content": "关键信息基础设施运营者在中华人民共和国境内运营中收集和产生的个人信息和重要数据应当在境内存储。",
+      "keywords": ["数据本地化", "境内存储", "关键基础设施"],
+      "violation_types": ["I7"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "CSL-052",
+      "article_number": "第五十二条",
+      "title": "出境安全评估",
+      "content": "关键信息基础设施运营者因业务需要，确需向境外提供个人信息和重要数据的，应当按照国家网信部门会同国务院有关部门制定的办法进行安全评估。",
+      "keywords": ["出境评估", "安全评估", "重要数据"],
+      "violation_types": ["I5", "I6"],
+      "risk_level": "high"
+    },
+    {
+      "article_id": "CSL-053",
+      "article_number": "第五十三条",
+      "title": "个人信息主体权利保障",
+      "content": "网络运营者为用户发布信息提供公开区域等服务的，应当告知用户可以依法采取保护个人信息的措施。",
+      "keywords": ["权利保障", "公开区域", "保护措施"],
+      "violation_types": ["I10", "I11"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "CSL-054",
+      "article_number": "第五十四条",
+      "title": "用户投诉处理",
+      "content": "网络运营者应当建立网络信息安全投诉、举报制度，公布投诉、举报方式等信息，及时受理并处理有关网络信息安全的投诉和举报。",
+      "keywords": ["投诉举报", "举报渠道", "及时处理"],
+      "violation_types": ["I11", "I12"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "CSL-055",
+      "article_number": "第五十五条",
+      "title": "能量色散型",
+      "content": "网络运营者对网信部门和有关部门依法实施的监督检查，应当予以配合。",
+      "keywords": ["监督检查", "配合义务"],
+      "violation_types": ["I1"],
+      "risk_level": "low"
+    },
+    {
+      "article_id": "CSL-056",
+      "article_number": "第五十六条",
+      "title": "网络信息安全管理制度",
+      "content": "网络运营者应当建立健全网络信息安全管理制度，明确网络信息安全管理工作机构及其职责。",
+      "keywords": ["管理制度", "管理职责", "工作机构"],
+      "violation_types": ["I1"],
+      "risk_level": "medium"
+    },
+    {
+      "article_id": "CSL-057",
+      "article_number": "第五十七条",
+      "title": "网络信息安全内容管理",
+      "content": "网络运营者应当加强对用户发布信息的管理，发现法律、行政法规禁止发布或者传输的信息的，应当立即停止传输该信息，采取消除等处置措施。",
+      "keywords": ["内容管理", "违法信息", "处置措施"],
+      "violation_types": ["I9"],
+      "risk_level": "high"
+    }
+  ]
+}
