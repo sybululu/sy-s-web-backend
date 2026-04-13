@@ -210,7 +210,7 @@ def load_models():
         
         # 使用 mT5-small 配置
         logger.info("创建MT5-small模型...")
-        config = AutoConfig.from_pretrained("google/mt5-small")
+        config = AutoConfig.from_pretrained(REPO_ID)
         model = MT5ForConditionalGeneration(config)
         
         # 加载权重
@@ -220,8 +220,8 @@ def load_models():
         
         model.eval()
         model_status.model_generator = model
-        # 使用 legacy=True 避免 tiktoken 依赖问题
-        model_status.tokenizer_generator = AutoTokenizer.from_pretrained("google/mt5-small", legacy=True)
+        # 从你自己的仓库加载 tokenizer
+        model_status.tokenizer_generator = AutoTokenizer.from_pretrained(REPO_ID, legacy=True)
         model_status.generator_loaded = True
         logger.info("生成模型加载成功!")
         
