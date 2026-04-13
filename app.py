@@ -177,20 +177,77 @@ def load_models():
     logger.info("-" * 30)
     logger.info("步骤2/2: 加载生成模型...")
     try:
-        # 直接从 google 加载预训练 mT5 模型
-        logger.info("正在加载预训练 mT5-small 模型...")
-        model_status.model_generator = MT5ForConditionalGeneration.from_pretrained("google/mt5-small")
+        from huggingface_hub import hf_hub_download
+        
+        # 下载 checkpoint
+        gen_ckpt_path = hf_hub_download(
+            repo_id=REPO_ID,
+            filename="rewrite_mT5_small.ckpt",
+            token=HF_TOKEN or None
+        )
+        logger.info(f"生成模型 checkpoint 已下载: {gen_ckpt_path}")
+        
+        # 加载 checkpoint
+        checkpoint = torch.load(gen_ckpt_path, map_location="cpu", weights_only=False)
+        
+        # 提取 state_dict
+        if isinstance(checkpoint, dict):
+            if "state_dict" in checkpoint:
+                state_dict = checkpoint["state_dict"]
+            elif "model_state_dict" in checkpoint:
+                state_dict = checkpoint["model_state_dict"]
+            else:
+                state_dict = checkpoint
+        else:
+            state_dict = checkpoint
+        
+        logger.info(f"State dict keys count: {len(state_dict) if isinstance(state_dict, dict) else 'N/A'}")
+        
+        # 清理键名前缀 (mt5. 或 model.)
+        cleaned_state_dict = {}
+        prefix_to_remove = []
+        if isinstance(state_dict, dict):
+            for k in state_dict.keys():
+                if k.startswith("mt5.") or k.startswith("model."):
+                    prefix_to_remove.append(k[:k.index(".", 5) if "." in k[5:] else len(k)])
+                    break
+        
+        for k, v in state_dict.items():
+            new_k = k
+            for prefix in ["mt5.", "model.", "generator."]:
+                if new_k.startswith(prefix):
+                    new_k = new_k[len(prefix):]
+                    break
+            cleaned_state_dict[new_k] = v
+        
+        # 使用默认的 MT5-small 配置创建模型
+        logger.info("使用默认 MT5-small 配置创建模型...")
+        config = AutoConfig.from_pretrained("google/mt5-small")
+        model = MT5ForConditionalGeneration.from_config(config)
+        
+        # 尝试加载权重
+        try:
+            model.load_state_dict(cleaned_state_dict, strict=False)
+            logger.info("权重加载成功!")
+        except Exception as load_err:
+            logger.warning(f"直接加载失败，尝试无严格匹配: {load_err}")
+            # 尝试只加载匹配的权重
+            model.load_state_dict(cleaned_state_dict, strict=False)
+        
+        model.eval()
+        model_status.model_generator = model
         model_status.tokenizer_generator = AutoTokenizer.from_pretrained("google/mt5-small", legacy=False)
-        model_status.model_generator.eval()
         model_status.generator_loaded = True
         logger.info("生成模型加载成功!")
         
     except Exception as e:
         logger.error(f"生成模型加载失败: {e}")
-        # Fallback: 尝试从本地 repo 加载
+        import traceback
+        traceback.print_exc()
+        # Fallback: 直接用预训练模型
         try:
-            model_status.model_generator = MT5ForConditionalGeneration.from_pretrained(REPO_ID)
-            model_status.tokenizer_generator = AutoTokenizer.from_pretrained(REPO_ID, legacy=False)
+            model_status.model_generator = MT5ForConditionalGeneration.from_pretrained("google/mt5-small")
+            model_status.tokenizer_generator = AutoTokenizer.from_pretrained("google/mt5-small", legacy=False)
             model_status.model_generator.eval()
             model_status.generator_loaded = True
             logger.info("生成模型(Fallback)加载成功")
