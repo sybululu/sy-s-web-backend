@@ -178,6 +178,7 @@ def load_models():
     logger.info("步骤2/2: 加载生成模型...")
     try:
         from huggingface_hub import hf_hub_download
+        import pytorch_lightning as pl
         
         # 下载 checkpoint
         gen_ckpt_path = hf_hub_download(
@@ -187,42 +188,51 @@ def load_models():
         )
         logger.info(f"Checkpoint 已下载: {gen_ckpt_path}")
         
-        # 加载 checkpoint - 只加载 state_dict，不加载其他内容
-        raw_ckpt = torch.load(gen_ckpt_path, map_location="cpu", weights_only=False)
-        logger.info(f"Checkpoint type: {type(raw_ckpt)}")
+        # 使用 PyTorch Lightning 的方式加载 (你的ckpt是PL格式)
+        logger.info("使用Lightning方式加载checkpoint...")
+        ckpt = pl.core.saving.load_checkpoint(gen_ckpt_path)
         
-        # 提取 state_dict (Lightning 格式)
-        if isinstance(raw_ckpt, dict):
-            if "state_dict" in raw_ckpt:
-                state_dict = {k.replace("model.", ""): v for k, v in raw_ckpt["state_dict"].items()}
-                logger.info("从 state_dict 提取")
-            elif "model_state_dict" in raw_ckpt:
-                state_dict = {k.replace("model.", ""): v for k, v in raw_ckpt["model_state_dict"].items()}
-                logger.info("从 model_state_dict 提取")
-            else:
-                # 可能是直接保存的 dict
-                state_dict = {k: v for k, v in raw_ckpt.items() if isinstance(v, torch.Tensor)}
-                logger.info(f"直接从 dict 提取 tensor，共 {len(state_dict)} 个")
+        logger.info(f"Checkpoint keys: {list(ckpt.keys())[:10]}")
+        
+        # 提取 state_dict
+        if "state_dict" in ckpt:
+            state_dict = ckpt["state_dict"]
         else:
-            state_dict = raw_ckpt
+            # PL Lightning ckpt 的 state_dict 键名格式通常是 "model.xxx" 或 "mt5.xxx"
+            state_dict = {k: v for k, v in ckpt.items() if isinstance(v, torch.Tensor)}
         
         logger.info(f"权重数量: {len(state_dict)}")
-        logger.info(f"前5个键: {list(state_dict.keys())[:5]}")
         
-        # 创建 MT5 模型（使用标准配置，忽略 ckpt 中的 config）
-        logger.info("创建 MT5-small 模型...")
+        # 清理键名前缀 - 你的ckpt可能有各种前缀
+        cleaned_state_dict = {}
+        for k, v in state_dict.items():
+            new_k = k
+            # 移除常见前缀
+            for prefix in ["model.", "mt5.", "generator.", "module.", "encoder.", "decoder."]:
+                if new_k.startswith(prefix):
+                    new_k = new_k[len(prefix):]
+            cleaned_state_dict[new_k] = v
+        
+        logger.info(f"清理后权重数量: {len(cleaned_state_dict)}")
+        logger.info(f"清理后键名示例: {list(cleaned_state_dict.keys())[:5]}")
+        
+        # 使用正确的 mT5-small 配置 (你的ckpt虽然是mT5但config保存错了)
+        logger.info("使用mT5-small标准配置...")
         config = AutoConfig.from_pretrained("google/mt5-small")
+        
+        # 创建模型
+        logger.info("创建MT5模型...")
         model = MT5ForConditionalGeneration(config)
         
         # 加载权重
-        logger.info("加载权重到模型...")
-        load_result = model.load_state_dict(state_dict, strict=False)
-        logger.info(f"加载完成 - 缺失: {len(load_result.missing_keys)}, 多余: {len(load_result.unexpected_keys)}")
+        logger.info("加载权重...")
+        result = model.load_state_dict(cleaned_state_dict, strict=False)
+        logger.info(f"缺失: {len(result.missing_keys)}, 多余: {len(result.unexpected_keys)}")
         
-        if load_result.missing_keys:
-            logger.info(f"缺失的键 (前5个): {load_result.missing_keys[:5]}")
-        if load_result.unexpected_keys:
-            logger.info(f"多余的键 (前5个): {load_result.unexpected_keys[:5]}")
+        if result.missing_keys:
+            logger.warning(f"缺失键 (可能是shared/embedding): {result.missing_keys[:3]}")
+        if result.unexpected_keys:
+            logger.warning(f"多余键: {result.unexpected_keys[:3]}")
         
         model.eval()
         model_status.model_generator = model
