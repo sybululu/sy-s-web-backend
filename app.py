@@ -208,7 +208,7 @@ def load_models():
                 cleaned_state_dict[new_k] = v
             state_dict = cleaned_state_dict
         
-        # 从 checkpoint 获取配置，直接创建完整模型
+        # 从 checkpoint 获取配置，创建完整模型
         if "config" in checkpoint:
             config_dict = checkpoint["config"]
             config = AutoConfig.from_dict(config_dict)
@@ -216,8 +216,8 @@ def load_models():
             # 使用默认配置
             config = AutoConfig.from_pretrained(REPO_ID)
         
-        # 创建模型结构
-        model_status.model_generator = MT5ForConditionalGeneration.from_config(config)
+        # 直接创建 MT5 模型并加载权重
+        model_status.model_generator = MT5ForConditionalGeneration(config)
         model_status.model_generator.load_state_dict(state_dict, strict=False)
         model_status.model_generator.eval()
         
