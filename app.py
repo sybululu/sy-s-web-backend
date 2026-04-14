@@ -273,24 +273,41 @@ def load_models():
         # checkpoint 只有权重，需要单独获取 config 和 tokenizer
         logger.info("获取 mT5 config 和 tokenizer...")
         
-        # 方法1: 尝试从本地仓库获取（如果用户上传了）
-        # 方法2: 用 HF_TOKEN 认证下载 google/mt5-small 的配置（文件很小）
+        # 加载 config
+        config = MT5Config.from_pretrained("google/mt5-small")
+        logger.info(f"Config 加载成功: vocab_size={config.vocab_size}")
         
-        try:
-            # 尝试从自己的仓库加载
-            config = MT5Config.from_pretrained(REPO_ID)
-            tokenizer = AutoTokenizer.from_pretrained(REPO_ID, legacy=True)
-            logger.info("从自己的仓库加载 config/tokenizer 成功")
-        except:
-            # 用 token 认证下载 google/mt5-small 的配置
-            logger.info("从 google/mt5-small 加载 config/tokenizer...")
-            config = MT5Config.from_pretrained("google/mt5-small")
-            tokenizer = AutoTokenizer.from_pretrained(
-                "google/mt5-small", 
-                legacy=True,
-                use_auth_token=HF_TOKEN if HF_TOKEN else None
-            )
-            logger.info("config/tokenizer 加载成功")
+        # 尝试多种方式加载 tokenizer
+        tokenizer = None
+        for tokenizer_source in [
+            ("google/mt5-small", True),
+            ("google/mt5-small", False),
+        ]:
+            try:
+                source, legacy = tokenizer_source
+                tokenizer = AutoTokenizer.from_pretrained(
+                    source,
+                    legacy=legacy,
+                    trust_remote_code=True
+                )
+                logger.info(f"从 {source} 加载 tokenizer 成功, vocab_size={len(tokenizer)}")
+                
+                # 检查 vocab 大小是否匹配模型
+                if len(tokenizer) == config.vocab_size:
+                    logger.info("Tokenizer vocab 大小匹配!")
+                    break
+                else:
+                    logger.warning(f"Tokenizer vocab ({len(tokenizer)}) 与模型 ({config.vocab_size}) 不匹配，尝试其他方式...")
+                    tokenizer = None
+            except Exception as e:
+                logger.warning(f"从 {source} 加载失败: {e}")
+        
+        if tokenizer is None:
+            # 最后尝试：不指定 legacy
+            tokenizer = AutoTokenizer.from_pretrained("google/mt5-small")
+            logger.warning(f"使用默认 tokenizer, vocab_size={len(tokenizer)}")
+        
+        logger.info(f"Tokenizer 类型: {type(tokenizer).__name__}, vocab_size: {len(tokenizer)}")
         
         model = MT5ForConditionalGeneration(config)
         
