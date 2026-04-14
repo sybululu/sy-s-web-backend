@@ -577,6 +577,7 @@ async def analyze(
                     "indicator": indicator_name,
                     "violation_name": indicator_name,
                     "violation_id": v_id,
+                    "category_name": indicator_name,  # 中文名称用于显示
                     "snippet": sentence,
                     "legal_basis": legal_basis,
                     "confidence": round(probs[min(violation_ids.index(v_id), len(probs)-1)] if violation_ids else 0.5, 3)
