@@ -10,6 +10,64 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["diagnose"])
 
 
+@router.get("/diagnose/generator/weights")
+async def diagnose_generator_weights():
+    """诊断 mT5 生成模型权重"""
+    from app import model_status
+    
+    result = {
+        "generator_loaded": model_status.generator_loaded
+    }
+    
+    if not model_status.generator_loaded:
+        result["status"] = "error"
+        result["error"] = "Generator not loaded"
+        return result
+    
+    try:
+        model = model_status.model_generator
+        
+        # 检查 encoder 和 decoder 的权重
+        encoder_weight_stats = []
+        decoder_weight_stats = []
+        
+        # Encoder 权重
+        for name, param in model.named_parameters():
+            if 'encoder' in name and 'weight' in name:
+                stats = {
+                    "name": name,
+                    "shape": list(param.shape),
+                    "mean": float(param.mean()),
+                    "std": float(param.std()),
+                    "min": float(param.min()),
+                    "max": float(param.max())
+                }
+                encoder_weight_stats.append(stats)
+        
+        # Decoder 权重
+        for name, param in model.named_parameters():
+            if 'decoder' in name and 'weight' in name and len(encoder_weight_stats) < 3:
+                stats = {
+                    "name": name,
+                    "shape": list(param.shape),
+                    "mean": float(param.mean()),
+                    "std": float(param.std()),
+                    "min": float(param.min()),
+                    "max": float(param.max())
+                }
+                decoder_weight_stats.append(stats)
+        
+        result["status"] = "success"
+        result["encoder_weights"] = encoder_weight_stats[:3]
+        result["decoder_weights"] = decoder_weight_stats[:3]
+        
+    except Exception as e:
+        result["status"] = "error"
+        result["error"] = str(e)
+    
+    return result
+
+
 @router.post("/diagnose/generate")
 async def test_mt5_generate(test_input: str = "这是一个隐私政策条款"):
     """

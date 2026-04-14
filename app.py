@@ -259,6 +259,9 @@ def load_models():
         
         logger.info(f"原始权重数量: {len(state_dict) if isinstance(state_dict, dict) else 'N/A'}")
         
+        # 打印原始键名样本
+        logger.info(f"原始键名样本: {list(state_dict.keys())[:10]}")
+        
         # 清理键名前缀
         cleaned_state_dict = {}
         for k, v in state_dict.items():
@@ -269,7 +272,8 @@ def load_models():
                     break
             cleaned_state_dict[new_k] = v
         
-        logger.info(f"清理后权重数量: {len(cleaned_state_dict)}")
+        logger.info(f"清理后键名数量: {len(cleaned_state_dict)}")
+        logger.info(f"清理后键名样本: {list(cleaned_state_dict.keys())[:10]}")
         
         # mT5 模型需要 config 和 tokenizer
         # checkpoint 只有权重，需要单独获取 config 和 tokenizer
