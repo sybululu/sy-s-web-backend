@@ -50,6 +50,14 @@ async def diagnose_generator_weights():
         
         # 检查是否匹配
         result["vocab_match"] = len(tokenizer) == model.config.vocab_size
+        
+        result["status"] = "success"
+        
+    except Exception as e:
+        result["status"] = "error"
+        result["error"] = str(e)
+    
+    return result
 
 
 @router.post("/diagnose/generate")
