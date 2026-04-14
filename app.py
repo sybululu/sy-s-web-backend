@@ -132,24 +132,36 @@ def load_models():
         # 从 checkpoint 获取配置，直接创建完整模型
         if "config" in checkpoint:
             config_dict = checkpoint["config"]
+            logger.info(f"Checkpoint config: {config_dict}")
             config = AutoConfig.from_dict(config_dict)
         else:
             # 使用默认配置
             config = AutoConfig.from_pretrained(REPO_ID)
+            logger.warning(f"Checkpoint 无 config，使用默认: vocab_size={config.vocab_size}")
         config.num_labels = 11
+        logger.info(f"最终 config: vocab_size={config.vocab_size}, hidden_size={config.hidden_size}, num_labels={config.num_labels}")
         
         # 创建模型结构
         model_status.model_classifier = AutoModelForSequenceClassification.from_config(config)
         
-        # 加载权重并检查匹配情况
-        load_result = model_status.model_classifier.load_state_dict(state_dict, strict=False)
-        missing_keys = load_result.missing_keys if hasattr(load_result, 'missing_keys') else []
-        unexpected_keys = load_result.unexpected_keys if hasattr(load_result, 'unexpected_keys') else []
-        
-        if missing_keys:
-            logger.warning(f"缺失的键 ({len(missing_keys)}): {missing_keys[:5]}...")
-        if unexpected_keys:
-            logger.warning(f"多余的键 ({len(unexpected_keys)}): {unexpected_keys[:5]}...")
+        # 加载权重并检查匹配情况（使用 strict=False 并捕获详细错误）
+        try:
+            load_result = model_status.model_classifier.load_state_dict(state_dict, strict=False)
+            missing_keys = load_result.missing_keys if hasattr(load_result, 'missing_keys') else []
+            unexpected_keys = load_result.unexpected_keys if hasattr(load_result, 'unexpected_keys') else []
+            
+            if missing_keys:
+                logger.warning(f"缺失的键 ({len(missing_keys)}): {missing_keys[:5]}...")
+            if unexpected_keys:
+                logger.warning(f"多余的键 ({len(unexpected_keys)}): {unexpected_keys[:5]}...")
+        except Exception as load_err:
+            # 捕获详细的尺寸不匹配错误
+            logger.error(f"权重加载详细错误: {load_err}")
+            # 打印 embedding 层的实际尺寸
+            for key in ['bert.embeddings.word_embeddings.weight', 'embeddings.word_embeddings.weight']:
+                if key in state_dict:
+                    logger.error(f"Checkpoint {key} shape: {state_dict[key].shape}")
+            raise
         
         model_status.model_classifier.eval()
         logger.info(f"分类模型加载成功! (num_labels={config.num_labels})")
