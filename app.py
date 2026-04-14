@@ -344,6 +344,14 @@ init_db()
 # 注册认证路由
 app.include_router(auth_router)
 
+# 注册诊断路由
+try:
+    from diagnose_api import router as diagnose_router
+    app.include_router(diagnose_router)
+    logger.info("诊断 API 已注册")
+except ImportError as e:
+    logger.warning(f"诊断 API 加载失败: {e}")
+
 # ==========================================
 # 合规指标体系与权重定义
 # ==========================================
