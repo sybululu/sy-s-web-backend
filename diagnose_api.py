@@ -9,6 +9,75 @@ from fastapi import APIRouter
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["diagnose"])
 
+
+@router.post("/diagnose/generate")
+async def test_mt5_generate(test_input: str = "这是一个隐私政策条款"):
+    """
+    测试 mT5 生成模型
+    """
+    from app import model_status
+    
+    result = {
+        "generator_loaded": model_status.generator_loaded,
+        "tokenizer_type": type(model_status.tokenizer_generator).__name__ if model_status.tokenizer_generator else None,
+        "test_input": test_input
+    }
+    
+    if not model_status.generator_loaded:
+        result["status"] = "error"
+        result["error"] = "Generator model not loaded"
+        return result
+    
+    try:
+        # 测试不同的 prompt 格式
+        prompts = [
+            f"rewrite: 把'{test_input}'改写得更规范",
+            f"把'{test_input}'改写成合规版本",
+            test_input,
+            f"rewrite: {test_input}"
+        ]
+        
+        results = []
+        for i, prompt in enumerate(prompts):
+            inputs = model_status.tokenizer_generator(
+                prompt,
+                return_tensors="pt",
+                truncation=True,
+                max_length=256,
+                padding=True
+            )
+            
+            with torch.no_grad():
+                outputs = model_status.model_generator.generate(
+                    **inputs,
+                    max_length=256,
+                    num_beams=4,
+                    early_stopping=True,
+                    do_sample=False
+                )
+            
+            generated = model_status.tokenizer_generator.decode(outputs[0], skip_special_tokens=True)
+            
+            results.append({
+                "prompt_index": i,
+                "prompt": prompt,
+                "generated": generated,
+                "generated_length": len(generated)
+            })
+            
+            logger.info(f"Prompt {i}: {prompt[:50]}... -> {generated[:100]}...")
+        
+        result["status"] = "success"
+        result["results"] = results
+        
+    except Exception as e:
+        result["status"] = "error"
+        result["error"] = str(e)
+        import traceback
+        result["traceback"] = traceback.format_exc()
+    
+    return result
+
 @router.get("/diagnose/model")
 async def diagnose_model():
     """
