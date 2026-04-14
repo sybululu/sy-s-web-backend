@@ -275,7 +275,7 @@ def load_models():
         
         # 加载 config
         config = MT5Config.from_pretrained("google/mt5-small")
-        logger.info(f"Config 加载成功: vocab_size={config.vocab_size}")
+        logger.info(f"Config vocab_size: {config.vocab_size}")
         
         # 尝试多种方式加载 tokenizer
         tokenizer = None
@@ -291,23 +291,20 @@ def load_models():
                     trust_remote_code=True
                 )
                 logger.info(f"从 {source} 加载 tokenizer 成功, vocab_size={len(tokenizer)}")
-                
-                # 检查 vocab 大小是否匹配模型
-                if len(tokenizer) == config.vocab_size:
-                    logger.info("Tokenizer vocab 大小匹配!")
-                    break
-                else:
-                    logger.warning(f"Tokenizer vocab ({len(tokenizer)}) 与模型 ({config.vocab_size}) 不匹配，尝试其他方式...")
-                    tokenizer = None
+                break
             except Exception as e:
                 logger.warning(f"从 {source} 加载失败: {e}")
         
         if tokenizer is None:
-            # 最后尝试：不指定 legacy
             tokenizer = AutoTokenizer.from_pretrained("google/mt5-small")
-            logger.warning(f"使用默认 tokenizer, vocab_size={len(tokenizer)}")
+        
+        # 如果 tokenizer 和 config 的 vocab_size 不匹配，调整 config
+        if len(tokenizer) != config.vocab_size:
+            logger.warning(f"Tokenizer vocab ({len(tokenizer)}) 与 config ({config.vocab_size}) 不匹配，调整 config...")
+            config.vocab_size = len(tokenizer)
         
         logger.info(f"Tokenizer 类型: {type(tokenizer).__name__}, vocab_size: {len(tokenizer)}")
+        logger.info(f"最终 Config vocab_size: {config.vocab_size}")
         
         model = MT5ForConditionalGeneration(config)
         
