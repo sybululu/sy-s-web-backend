@@ -269,42 +269,24 @@ def load_models():
         logger.info(f"键名数量: {len(cleaned_state_dict)}")
         logger.info(f"键名样本: {list(cleaned_state_dict.keys())[:10]}")
         
-        # mT5 模型需要 config 和 tokenizer
-        # checkpoint 只有权重，需要单独获取 config 和 tokenizer
-        logger.info("获取 mT5 config 和 tokenizer...")
+        # 关键：必须使用 google/mt5-small 原始的 config 和 tokenizer
+        # 因为微调时只是训练权重，原始 tokenizer (vocab_size=250100) 不变
+        logger.info("获取 mT5 原始 config 和 tokenizer...")
         
-        # 加载 config
+        # 从 google/mt5-small 加载原始 config（重要！不要用 checkpoint 里的 config）
         config = MT5Config.from_pretrained("google/mt5-small")
-        logger.info(f"Config vocab_size: {config.vocab_size}")
+        logger.info(f"原始 config vocab_size: {config.vocab_size}")
         
-        # 尝试多种方式加载 tokenizer
-        tokenizer = None
-        for tokenizer_source in [
-            ("google/mt5-small", True),
-            ("google/mt5-small", False),
-        ]:
-            try:
-                source, legacy = tokenizer_source
-                tokenizer = AutoTokenizer.from_pretrained(
-                    source,
-                    legacy=legacy,
-                    trust_remote_code=True
-                )
-                logger.info(f"从 {source} 加载 tokenizer 成功, vocab_size={len(tokenizer)}")
-                break
-            except Exception as e:
-                logger.warning(f"从 {source} 加载失败: {e}")
+        # 从 google/mt5-small 加载原始 tokenizer
+        tokenizer = T5Tokenizer.from_pretrained("google/mt5-small")
+        logger.info(f"原始 tokenizer vocab_size: {len(tokenizer)}")
         
-        if tokenizer is None:
-            tokenizer = AutoTokenizer.from_pretrained("google/mt5-small")
+        # 验证 vocab_size 必须一致
+        if config.vocab_size != len(tokenizer):
+            logger.error(f"Config vocab_size ({config.vocab_size}) != Tokenizer vocab_size ({len(tokenizer)})")
+            raise ValueError("Config 和 Tokenizer 的 vocab_size 不匹配!")
         
-        # 如果 tokenizer 和 config 的 vocab_size 不匹配，调整 config
-        if len(tokenizer) != config.vocab_size:
-            logger.warning(f"Tokenizer vocab ({len(tokenizer)}) 与 config ({config.vocab_size}) 不匹配，调整 config...")
-            config.vocab_size = len(tokenizer)
-        
-        logger.info(f"Tokenizer 类型: {type(tokenizer).__name__}, vocab_size: {len(tokenizer)}")
-        logger.info(f"最终 Config vocab_size: {config.vocab_size}")
+        logger.info(f"Config 和 Tokenizer 匹配: vocab_size={config.vocab_size}")
         
         model = MT5ForConditionalGeneration(config)
         
