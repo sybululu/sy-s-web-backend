@@ -559,11 +559,25 @@ async def analyze(
         probs = roberta_predict(sentence)
         
         # 11类 → 12类 映射
+        # 阈值降低以适应模型输出分布（模型输出在 0.42-0.62 之间）
+        THRESHOLD = 0.40
         if map_to_12_classes is not None:
             violation_ids = map_to_12_classes(probs)
         else:
-            # Fallback: 使用概率最高的类别
-            violation_ids = [f"I{max(0, i-1) + 1}" for i, p in enumerate(probs) if p > 0.5][:3]
+            # Fallback: 使用概率最高的类别（即使低于 0.5）
+            # 原始11类直接映射到I1-I11（跳过I12）
+            ID_MAPPING_FALLBACK = {
+                0: "I1", 1: "I2", 2: "I3", 3: "I4", 4: "I5",
+                5: "I6", 6: "I7", 7: "I8", 8: "I9", 9: "I10", 10: "I11"
+            }
+            violation_ids = []
+            if probs:
+                max_idx = probs.index(max(probs))
+                max_prob = probs[max_idx]
+                if max_prob >= THRESHOLD:
+                    v_id = ID_MAPPING_FALLBACK.get(max_idx)
+                    if v_id:
+                        violation_ids = [v_id]
         
         for v_id in violation_ids:
             indicator_name = ID_TO_INDICATOR.get(v_id)

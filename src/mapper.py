@@ -60,7 +60,7 @@ def map_to_12_classes(probs: List[float]) -> List[str]:
         probs: 11类概率向量 [p0, p1, ..., p10]
         
     Returns:
-        违规ID列表（只返回概率最高的那个）
+        违规ID列表（返回概率最高的类别，阈值降低以适应模型输出分布）
     """
     if not probs:
         return []
@@ -69,8 +69,11 @@ def map_to_12_classes(probs: List[float]) -> List[str]:
     max_idx = probs.index(max(probs))
     max_prob = probs[max_idx]
     
-    # 概率低于阈值，不返回违规
-    if max_prob < 0.5:
+    # 阈值降低以适应模型输出分布（模型输出在 0.42-0.62 之间）
+    # 即使置信度不高，也返回概率最高的类别
+    THRESHOLD = 0.40  # 降低阈值以确保能检测到违规
+    
+    if max_prob < THRESHOLD:
         return []
     
     # 直接映射
