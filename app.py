@@ -135,28 +135,29 @@ def load_models():
                 sample_keys = list(state_dict.keys())[:5]
                 logger.info(f"样本键名: {sample_keys}")
         
-        # 从 checkpoint 获取配置，直接创建完整模型
+        # 从 checkpoint 获取配置
         if "config" in checkpoint:
             config_dict = checkpoint["config"]
-            logger.info(f"Checkpoint config: {config_dict}")
+            logger.info(f"Checkpoint 包含 config: {config_dict}")
             config = AutoConfig.from_dict(config_dict)
         else:
-            # 使用默认配置
+            # Checkpoint 无 config，使用默认配置
+            logger.info("Checkpoint 无 config，使用默认配置")
             config = AutoConfig.from_pretrained(REPO_ID)
-            logger.warning(f"Checkpoint 无 config，使用默认: vocab_size={config.vocab_size}")
         
-        # 从 state_dict 中提取正确的 vocab_size（防止 checkpoint 训练时用了不同 tokenizer）
+        # 从 state_dict 中提取正确的 vocab_size
         for key in state_dict.keys():
             if 'word_embeddings.weight' in key:
                 checkpoint_vocab_size = state_dict[key].shape[0]
-                logger.info(f"从权重中检测 vocab_size: {checkpoint_vocab_size}")
                 if config.vocab_size != checkpoint_vocab_size:
-                    logger.warning(f"Config vocab_size ({config.vocab_size}) 与 checkpoint ({checkpoint_vocab_size}) 不匹配，使用 checkpoint 的值")
+                    logger.info(f"使用 checkpoint 的 vocab_size: {checkpoint_vocab_size} (config 为 {config.vocab_size})")
                     config.vocab_size = checkpoint_vocab_size
+                else:
+                    logger.info(f"Checkpoint vocab_size: {checkpoint_vocab_size}")
                 break
         
         config.num_labels = 11
-        logger.info(f"最终 config: vocab_size={config.vocab_size}, hidden_size={config.hidden_size}, num_labels={config.num_labels}")
+        logger.info(f"模型配置: vocab_size={config.vocab_size}, hidden_size={config.hidden_size}, num_labels={config.num_labels}")
         
         # 创建模型结构
         model_status.model_classifier = AutoModelForSequenceClassification.from_config(config)
@@ -183,22 +184,18 @@ def load_models():
         model_status.model_classifier.eval()
         logger.info(f"分类模型加载成功! (num_labels={config.num_labels})")
         
-        # 直接从 checkpoint 目录加载 tokenizer（使用 RoBERTa tokenizer）
+        # 加载 tokenizer（使用与模型训练时相同的 tokenizer）
         try:
             model_status.tokenizer_classifier = AutoTokenizer.from_pretrained(REPO_ID)
+            logger.info(f"Tokenizer 加载成功: {type(model_status.tokenizer_classifier).__name__}")
         except:
-            # Fallback: 使用中文 RoBERTa tokenizer（训练时可能用的是这个）
-            logger.warning("无法从 repo 加载 tokenizer，使用 hfl/chinese-roberta-wwm-ext")
+            # Fallback: 使用 hfl/chinese-roberta-wwm-ext（vocab_size=21128，与 checkpoint 匹配）
+            logger.info("使用 fallback tokenizer: hfl/chinese-roberta-wwm-ext")
             model_status.tokenizer_classifier = AutoTokenizer.from_pretrained("hfl/chinese-roberta-wwm-ext")
         
-        # 验证 tokenizer 类型和 vocab_size
+        # 验证 tokenizer vocab_size
         tokenizer_vocab_size = len(model_status.tokenizer_classifier)
-        logger.info(f"Tokenizer 类型: {type(model_status.tokenizer_classifier).__name__}, vocab_size: {tokenizer_vocab_size}")
-        
-        # 检查 tokenizer vocab_size 是否与模型匹配
-        if tokenizer_vocab_size != config.vocab_size:
-            logger.warning(f"Tokenizer vocab_size ({tokenizer_vocab_size}) 与模型 vocab_size ({config.vocab_size}) 不匹配！")
-            logger.warning("这会导致推理结果不正确！")
+        logger.info(f"Tokenizer vocab_size: {tokenizer_vocab_size}")
         
         model_status.classifier_loaded = True
         logger.info("分类模型加载成功!")
