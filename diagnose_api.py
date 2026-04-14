@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api/v1", tags=["diagnose"])
 @router.get("/diagnose/generator/weights")
 async def diagnose_generator_weights():
     """诊断 mT5 生成模型权重和 tokenizer"""
-    from app import model_status
+    from app import model_status, safe_decode
     
     result = {
         "generator_loaded": model_status.generator_loaded
@@ -132,7 +132,7 @@ async def test_mt5_generate(test_input: str = "这是一个隐私政策条款"):
                     do_sample=False
                 )
             
-            generated = model_status.tokenizer_generator.decode(outputs[0], skip_special_tokens=True)
+            generated = safe_decode(model_status.tokenizer_generator, outputs[0], skip_special_tokens=True)
             
             results.append({
                 "prompt_index": i,

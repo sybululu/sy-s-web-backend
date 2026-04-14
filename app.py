@@ -28,6 +28,29 @@ from diff_match_patch import diff_match_patch
 from models import User, Project, get_db, init_db
 from auth import router as auth_router, get_current_user
 
+
+# ==========================================
+# mT5 生成模型 vocab 兼容处理
+# ==========================================
+# 微调 checkpoint 的 vocab_size=250112，但原始 tokenizer 只有 250100
+# 需要在 decode 时过滤掉超出范围的 token ID
+
+_tokenizer_vocab_size = None  # 缓存 tokenizer vocab size
+
+def safe_decode(tokenizer, token_ids, skip_special_tokens=True):
+    """安全解码，忽略超出 tokenizer 词汇表的 token ID"""
+    global _tokenizer_vocab_size
+    if _tokenizer_vocab_size is None:
+        _tokenizer_vocab_size = len(tokenizer)
+    
+    # 过滤掉超出词汇表的 token ID
+    filtered_ids = [tid for tid in token_ids if tid < _tokenizer_vocab_size]
+    
+    if not filtered_ids:
+        return ""
+    
+    return tokenizer.decode(filtered_ids, skip_special_tokens=skip_special_tokens)
+
 # ==========================================
 # 配置日志
 # ==========================================
@@ -278,15 +301,17 @@ def load_models():
         logger.info(f"原始 config vocab_size: {config.vocab_size}")
         
         # 从 google/mt5-small 加载原始 tokenizer
-        tokenizer = T5Tokenizer.from_pretrained("google/mt5-small")
-        logger.info(f"原始 tokenizer vocab_size: {len(tokenizer)}")
+        tokenizer = T5Tokenizer.from_pretrained("google/mt5-small", legacy=True)
+        tokenizer_vocab = len(tokenizer)
+        logger.info(f"原始 tokenizer vocab_size: {tokenizer_vocab}")
         
-        # 验证 vocab_size 必须一致
-        if config.vocab_size != len(tokenizer):
-            logger.error(f"Config vocab_size ({config.vocab_size}) != Tokenizer vocab_size ({len(tokenizer)})")
-            raise ValueError("Config 和 Tokenizer 的 vocab_size 不匹配!")
-        
-        logger.info(f"Config 和 Tokenizer 匹配: vocab_size={config.vocab_size}")
+        # Config vocab_size (250112) 与 Tokenizer vocab_size (250100) 不同
+        # 微调时保存的 config 被改了，但 tokenizer 仍是原始的 250100
+        # 解决方案：以 config 的 vocab_size 创建模型（匹配权重形状），
+        # 但在推理时只取 tokenizer 范围内的 token
+        actual_model_vocab = config.vocab_size
+        logger.info(f"模型实际 vocab_size (来自权重): {actual_model_vocab}")
+        logger.info(f"Tokenizer vocab_size: {tokenizer_vocab}")
         
         model = MT5ForConditionalGeneration(config)
         
@@ -723,7 +748,7 @@ async def rectify_snippet(
                 no_repeat_ngram_size=3,
                 length_penalty=1.0
             )
-        suggested_text = model_status.tokenizer_generator.decode(outputs[0], skip_special_tokens=True)
+        suggested_text = safe_decode(model_status.tokenizer_generator, outputs[0], skip_special_tokens=True)
         
         # 清理 "rewrite:" 前缀
         suggested_text = suggested_text.replace("rewrite:", "").strip()
