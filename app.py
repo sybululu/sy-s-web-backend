@@ -262,18 +262,12 @@ def load_models():
         # 打印原始键名样本
         logger.info(f"原始键名样本: {list(state_dict.keys())[:10]}")
         
-        # 清理键名前缀
-        cleaned_state_dict = {}
-        for k, v in state_dict.items():
-            new_k = k
-            for prefix in ["model.", "mt5.", "generator.", "module.", "encoder.", "decoder."]:
-                if new_k.startswith(prefix):
-                    new_k = new_k[len(prefix):]
-                    break
-            cleaned_state_dict[new_k] = v
+        # mT5 的键名格式是 model.xxx，不需要清理前缀
+        # 保持原始格式以确保正确加载
+        cleaned_state_dict = state_dict
         
-        logger.info(f"清理后键名数量: {len(cleaned_state_dict)}")
-        logger.info(f"清理后键名样本: {list(cleaned_state_dict.keys())[:10]}")
+        logger.info(f"键名数量: {len(cleaned_state_dict)}")
+        logger.info(f"键名样本: {list(cleaned_state_dict.keys())[:10]}")
         
         # mT5 模型需要 config 和 tokenizer
         # checkpoint 只有权重，需要单独获取 config 和 tokenizer
