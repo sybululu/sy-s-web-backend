@@ -709,13 +709,8 @@ async def rectify_snippet(
     
     # 使用 mT5 生成整改建议
     if model_status.generator_loaded:
-        prompt = f"""请根据以下法律规范，修改违规条款使其符合合规要求。
-
-法律规范：{legal_context}
-
-违规条款：{request.original_snippet}
-
-整改后（保持原文风格，只修改违规内容）："""
+        # mT5 需要 task prefix，格式为 "rewrite: <text>"
+        prompt = "rewrite: 根据以下法律规范修改违规条款。\n法律规范：" + legal_context + "\n违规条款：" + request.original_snippet + "\n整改后："
         
         inputs = model_status.tokenizer_generator(
             prompt,
@@ -728,12 +723,18 @@ async def rectify_snippet(
         with torch.no_grad():
             outputs = model_status.model_generator.generate(
                 **inputs,
-                max_length=256,
+                max_length=512,
                 num_beams=4,
                 early_stopping=True,
-                no_repeat_ngram_size=2
+                no_repeat_ngram_size=3,
+                length_penalty=1.0
             )
         suggested_text = model_status.tokenizer_generator.decode(outputs[0], skip_special_tokens=True)
+        
+        # 清理 "rewrite:" 前缀
+        suggested_text = suggested_text.replace("rewrite:", "").strip()
+        
+        logger.info(f"生成结果: {suggested_text[:100]}...")
     else:
         # Fallback: 返回通用建议
         indicator_name = ID_TO_INDICATOR.get(request.violation_type, "未知违规")
