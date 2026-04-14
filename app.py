@@ -138,6 +138,17 @@ def load_models():
             # 使用默认配置
             config = AutoConfig.from_pretrained(REPO_ID)
             logger.warning(f"Checkpoint 无 config，使用默认: vocab_size={config.vocab_size}")
+        
+        # 从 state_dict 中提取正确的 vocab_size（防止 checkpoint 训练时用了不同 tokenizer）
+        for key in state_dict.keys():
+            if 'word_embeddings.weight' in key:
+                checkpoint_vocab_size = state_dict[key].shape[0]
+                logger.info(f"从权重中检测 vocab_size: {checkpoint_vocab_size}")
+                if config.vocab_size != checkpoint_vocab_size:
+                    logger.warning(f"Config vocab_size ({config.vocab_size}) 与 checkpoint ({checkpoint_vocab_size}) 不匹配，使用 checkpoint 的值")
+                    config.vocab_size = checkpoint_vocab_size
+                break
+        
         config.num_labels = 11
         logger.info(f"最终 config: vocab_size={config.vocab_size}, hidden_size={config.hidden_size}, num_labels={config.num_labels}")
         
