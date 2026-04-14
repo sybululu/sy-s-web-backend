@@ -122,15 +122,9 @@ def load_models():
             else:
                 state_dict = checkpoint
             
-            # 清理键名前缀（RoBERTa 训练时可能带这些前缀）
-            cleaned_state_dict = {}
-            for k, v in state_dict.items():
-                new_k = k.replace("model.", "").replace("roberta.", "").replace("bert.", "")
-                cleaned_state_dict[new_k] = v
-            state_dict = cleaned_state_dict
-            
-            # 调试：打印清理后的键名
-            logger.info(f"清理后键名数量: {len(state_dict)}")
+            # 不再清理键名前缀，因为 AutoModelForSequenceClassification
+            # 使用的是 bert.xxx 格式，与 checkpoint 一致
+            logger.info(f"键名数量: {len(state_dict)}")
             if state_dict:
                 sample_keys = list(state_dict.keys())[:5]
                 logger.info(f"样本键名: {sample_keys}")
