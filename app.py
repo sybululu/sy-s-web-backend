@@ -136,28 +136,40 @@ def load_models():
                 logger.info(f"样本键名: {sample_keys}")
         
         # 从 checkpoint 获取配置
-        if "config" in checkpoint:
-            config_dict = checkpoint["config"]
-            logger.info(f"Checkpoint 包含 config: {config_dict}")
-            config = AutoConfig.from_dict(config_dict)
-        else:
-            # Checkpoint 无 config，使用默认配置
-            logger.info("Checkpoint 无 config，使用默认配置")
-            config = AutoConfig.from_pretrained(REPO_ID)
+        config = None
+        checkpoint_config = None
+        if isinstance(checkpoint, dict):
+            # 尝试多种可能的 config 键名
+            for config_key in ['config', 'model_config', 'hparams', 'hyper_parameters']:
+                if config_key in checkpoint:
+                    checkpoint_config = checkpoint[config_key]
+                    config = AutoConfig.from_dict(checkpoint_config)
+                    logger.info(f"找到 config，键名: {config_key}, vocab_size={config.vocab_size}")
+                    break
         
-        # 从 state_dict 中提取正确的 vocab_size
+        if config is None:
+            # Checkpoint 中没有 config，尝试从 repo 加载
+            try:
+                logger.info("从 HF repo 加载 config...")
+                config = AutoConfig.from_pretrained(REPO_ID)
+                logger.info(f"从 repo 加载 config 成功: vocab_size={config.vocab_size}")
+            except Exception as e:
+                logger.warning(f"无法从 repo 加载 config: {e}")
+                config = AutoConfig.from_pretrained("bert-base-chinese")
+        
+        # 从 state_dict 获取正确的 vocab_size（防止 checkpoint 训练时用了不同 tokenizer）
+        checkpoint_vocab_size = None
         for key in state_dict.keys():
             if 'word_embeddings.weight' in key:
                 checkpoint_vocab_size = state_dict[key].shape[0]
-                if config.vocab_size != checkpoint_vocab_size:
-                    logger.info(f"使用 checkpoint 的 vocab_size: {checkpoint_vocab_size} (config 为 {config.vocab_size})")
-                    config.vocab_size = checkpoint_vocab_size
-                else:
-                    logger.info(f"Checkpoint vocab_size: {checkpoint_vocab_size}")
                 break
         
+        if checkpoint_vocab_size and config.vocab_size != checkpoint_vocab_size:
+            logger.info(f"调整 vocab_size: {config.vocab_size} -> {checkpoint_vocab_size}")
+            config.vocab_size = checkpoint_vocab_size
+        
         config.num_labels = 11
-        logger.info(f"模型配置: vocab_size={config.vocab_size}, hidden_size={config.hidden_size}, num_labels={config.num_labels}")
+        logger.info(f"最终模型配置: vocab_size={config.vocab_size}, hidden_size={config.hidden_size}, num_labels={config.num_labels}")
         
         # 创建模型结构
         model_status.model_classifier = AutoModelForSequenceClassification.from_config(config)
@@ -184,16 +196,20 @@ def load_models():
         model_status.model_classifier.eval()
         logger.info(f"分类模型加载成功! (num_labels={config.num_labels})")
         
-        # 加载 tokenizer（使用与模型训练时相同的 tokenizer）
+        # 加载 tokenizer（需要与模型训练时使用相同的 tokenizer）
+        tokenizer_loaded = False
         try:
             model_status.tokenizer_classifier = AutoTokenizer.from_pretrained(REPO_ID)
-            logger.info(f"Tokenizer 加载成功: {type(model_status.tokenizer_classifier).__name__}")
-        except:
-            # Fallback: 使用 hfl/chinese-roberta-wwm-ext（vocab_size=21128，与 checkpoint 匹配）
-            logger.info("使用 fallback tokenizer: hfl/chinese-roberta-wwm-ext")
-            model_status.tokenizer_classifier = AutoTokenizer.from_pretrained("hfl/chinese-roberta-wwm-ext")
+            tokenizer_loaded = True
+            logger.info(f"Tokenizer 从 repo 加载成功: {type(model_status.tokenizer_classifier).__name__}")
+        except Exception as e:
+            logger.warning(f"无法从 repo 加载 tokenizer: {e}")
         
-        # 验证 tokenizer vocab_size
+        if not tokenizer_loaded:
+            # 使用 hfl/chinese-roberta-wwm-ext（vocab_size=21128，与 checkpoint 匹配）
+            model_status.tokenizer_classifier = AutoTokenizer.from_pretrained("hfl/chinese-roberta-wwm-ext")
+            logger.info(f"使用 fallback tokenizer: hfl/chinese-roberta-wwm-ext")
+        
         tokenizer_vocab_size = len(model_status.tokenizer_classifier)
         logger.info(f"Tokenizer vocab_size: {tokenizer_vocab_size}")
         
