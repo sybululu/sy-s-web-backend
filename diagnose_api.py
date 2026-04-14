@@ -12,7 +12,7 @@ router = APIRouter(prefix="/api/v1", tags=["diagnose"])
 
 @router.get("/diagnose/generator/weights")
 async def diagnose_generator_weights():
-    """诊断 mT5 生成模型权重"""
+    """诊断 mT5 生成模型权重和 tokenizer"""
     from app import model_status
     
     result = {
@@ -26,46 +26,30 @@ async def diagnose_generator_weights():
     
     try:
         model = model_status.model_generator
+        tokenizer = model_status.tokenizer_generator
         
-        # 检查 encoder 和 decoder 的权重
-        encoder_weight_stats = []
-        decoder_weight_stats = []
+        # Tokenizer 信息
+        result["tokenizer"] = {
+            "type": type(tokenizer).__name__,
+            "vocab_size": len(tokenizer),
+            "model_max_length": tokenizer.model_max_length
+        }
         
-        # Encoder 权重
-        for name, param in model.named_parameters():
-            if 'encoder' in name and 'weight' in name:
-                stats = {
-                    "name": name,
-                    "shape": list(param.shape),
-                    "mean": float(param.mean()),
-                    "std": float(param.std()),
-                    "min": float(param.min()),
-                    "max": float(param.max())
-                }
-                encoder_weight_stats.append(stats)
+        # 检查是否有 spiece model
+        if hasattr(tokenizer, 'sp_model') and tokenizer.sp_model:
+            result["tokenizer"]["has_spiece_model"] = True
+        else:
+            result["tokenizer"]["has_spiece_model"] = False
         
-        # Decoder 权重
-        for name, param in model.named_parameters():
-            if 'decoder' in name and 'weight' in name and len(encoder_weight_stats) < 3:
-                stats = {
-                    "name": name,
-                    "shape": list(param.shape),
-                    "mean": float(param.mean()),
-                    "std": float(param.std()),
-                    "min": float(param.min()),
-                    "max": float(param.max())
-                }
-                decoder_weight_stats.append(stats)
+        # 模型 vocab 大小
+        result["model_config"] = {
+            "vocab_size": model.config.vocab_size,
+            "d_model": model.config.d_model,
+            "d_ff": model.config.d_ff
+        }
         
-        result["status"] = "success"
-        result["encoder_weights"] = encoder_weight_stats[:3]
-        result["decoder_weights"] = decoder_weight_stats[:3]
-        
-    except Exception as e:
-        result["status"] = "error"
-        result["error"] = str(e)
-    
-    return result
+        # 检查是否匹配
+        result["vocab_match"] = len(tokenizer) == model.config.vocab_size
 
 
 @router.post("/diagnose/generate")
