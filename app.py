@@ -122,8 +122,14 @@ def load_models():
             else:
                 state_dict = checkpoint
             
-            # 不再清理键名前缀，因为 AutoModelForSequenceClassification
-            # 使用的是 bert.xxx 格式，与 checkpoint 一致
+            # 不再清理键名前缀，但需要处理分类头命名差异
+            # Checkpoint 使用 fc.weight，模型期望 classifier.weight
+            for key in list(state_dict.keys()):
+                if key == 'fc.weight':
+                    state_dict['classifier.weight'] = state_dict.pop('fc.weight')
+                elif key == 'fc.bias':
+                    state_dict['classifier.bias'] = state_dict.pop('fc.bias')
+            
             logger.info(f"键名数量: {len(state_dict)}")
             if state_dict:
                 sample_keys = list(state_dict.keys())[:5]
@@ -185,8 +191,14 @@ def load_models():
             logger.warning("无法从 repo 加载 tokenizer，使用 hfl/chinese-roberta-wwm-ext")
             model_status.tokenizer_classifier = AutoTokenizer.from_pretrained("hfl/chinese-roberta-wwm-ext")
         
-        # 验证 tokenizer 类型
-        logger.info(f"Tokenizer 类型: {type(model_status.tokenizer_classifier).__name__}")
+        # 验证 tokenizer 类型和 vocab_size
+        tokenizer_vocab_size = len(model_status.tokenizer_classifier)
+        logger.info(f"Tokenizer 类型: {type(model_status.tokenizer_classifier).__name__}, vocab_size: {tokenizer_vocab_size}")
+        
+        # 检查 tokenizer vocab_size 是否与模型匹配
+        if tokenizer_vocab_size != config.vocab_size:
+            logger.warning(f"Tokenizer vocab_size ({tokenizer_vocab_size}) 与模型 vocab_size ({config.vocab_size}) 不匹配！")
+            logger.warning("这会导致推理结果不正确！")
         
         model_status.classifier_loaded = True
         logger.info("分类模型加载成功!")
