@@ -51,6 +51,32 @@ async def diagnose_generator_weights():
         # 检查是否匹配
         result["vocab_match"] = len(tokenizer) == model.config.vocab_size
         
+        # 检查 decoder 权重
+        decoder_weights = []
+        for name, param in model.named_parameters():
+            if 'decoder' in name and 'weight' in name:
+                decoder_weights.append({
+                    "name": name,
+                    "shape": list(param.shape),
+                    "mean": float(param.mean()),
+                    "std": float(param.std())
+                })
+        result["decoder_weights_count"] = len(decoder_weights)
+        result["decoder_weights_sample"] = decoder_weights[:2]
+        
+        # 检查 lm_head 权重
+        lm_head_weights = []
+        for name, param in model.named_parameters():
+            if 'lm_head' in name or ('output' in name and 'weight' in name):
+                lm_head_weights.append({
+                    "name": name,
+                    "shape": list(param.shape),
+                    "mean": float(param.mean()),
+                    "std": float(param.std())
+                })
+        result["lm_head_weights_count"] = len(lm_head_weights)
+        result["lm_head_weights_sample"] = lm_head_weights[:2]
+        
         result["status"] = "success"
         
     except Exception as e:
