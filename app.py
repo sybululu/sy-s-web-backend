@@ -122,12 +122,18 @@ def load_models():
             else:
                 state_dict = checkpoint
             
-            # 清理键名前缀
+            # 清理键名前缀（RoBERTa 训练时可能带这些前缀）
             cleaned_state_dict = {}
             for k, v in state_dict.items():
-                new_k = k.replace("model.", "").replace("bert.", "")
+                new_k = k.replace("model.", "").replace("roberta.", "").replace("bert.", "")
                 cleaned_state_dict[new_k] = v
             state_dict = cleaned_state_dict
+            
+            # 调试：打印清理后的键名
+            logger.info(f"清理后键名数量: {len(state_dict)}")
+            if state_dict:
+                sample_keys = list(state_dict.keys())[:5]
+                logger.info(f"样本键名: {sample_keys}")
         
         # 从 checkpoint 获取配置，直接创建完整模型
         if "config" in checkpoint:
@@ -140,15 +146,30 @@ def load_models():
         
         # 创建模型结构
         model_status.model_classifier = AutoModelForSequenceClassification.from_config(config)
-        model_status.model_classifier.load_state_dict(state_dict, strict=False)
-        model_status.model_classifier.eval()
         
-        # 直接从 checkpoint 目录加载 tokenizer（不单独下载 base model）
+        # 加载权重并检查匹配情况
+        load_result = model_status.model_classifier.load_state_dict(state_dict, strict=False)
+        missing_keys = load_result.missing_keys if hasattr(load_result, 'missing_keys') else []
+        unexpected_keys = load_result.unexpected_keys if hasattr(load_result, 'unexpected_keys') else []
+        
+        if missing_keys:
+            logger.warning(f"缺失的键 ({len(missing_keys)}): {missing_keys[:5]}...")
+        if unexpected_keys:
+            logger.warning(f"多余的键 ({len(unexpected_keys)}): {unexpected_keys[:5]}...")
+        
+        model_status.model_classifier.eval()
+        logger.info(f"分类模型加载成功! (num_labels={config.num_labels})")
+        
+        # 直接从 checkpoint 目录加载 tokenizer（使用 RoBERTa tokenizer）
         try:
             model_status.tokenizer_classifier = AutoTokenizer.from_pretrained(REPO_ID)
         except:
-            # Fallback: 使用通用中文 tokenizer
+            # Fallback: 使用中文 RoBERTa tokenizer（训练时可能用的是这个）
+            logger.warning("无法从 repo 加载 tokenizer，使用 hfl/chinese-roberta-wwm-ext")
             model_status.tokenizer_classifier = AutoTokenizer.from_pretrained("hfl/chinese-roberta-wwm-ext")
+        
+        # 验证 tokenizer 类型
+        logger.info(f"Tokenizer 类型: {type(model_status.tokenizer_classifier).__name__}")
         
         model_status.classifier_loaded = True
         logger.info("分类模型加载成功!")
@@ -390,7 +411,7 @@ def split_into_sentences(text: str) -> List[str]:
     return [s.strip() for s in sentences if len(s.strip()) > 5]
 
 def roberta_predict(sentence: str) -> List[float]:
-    """使用 BERT-MoE 分类模型预测"""
+    """使用 RoBERTa 分类模型预测"""
     if not model_status.classifier_loaded:
         logger.warning("分类模型未加载，返回默认概率")
         return [0.0] * 11
@@ -405,16 +426,19 @@ def roberta_predict(sentence: str) -> List[float]:
     
     with torch.no_grad():
         outputs = model_status.model_classifier(**inputs)
-        probs = torch.sigmoid(outputs.logits).squeeze().tolist()
+        logits = outputs.logits.squeeze()
+        
+        # 调试：输出原始 logits（正负表示分类倾向）
+        logger.info(f"原始 logits: {logits.tolist()}")
+        
+        probs = torch.sigmoid(logits).tolist()
     
     if not isinstance(probs, list):
         probs = [probs]
     
     # 调试日志：输出概率分布
-    logger.info(f"分类预测 - 句子: {sentence[:50]}...")
-    logger.info(f"概率分布: {probs}")
     max_idx = probs.index(max(probs)) if probs else -1
-    logger.info(f"最高概率类别: {max_idx}, 概率: {probs[max_idx] if max_idx >= 0 else 0}")
+    logger.info(f"句子: {sentence[:30]}... | 最高类别: {max_idx}, 概率: {probs[max_idx] if max_idx >= 0 else 0:.4f}")
     
     return probs
 
