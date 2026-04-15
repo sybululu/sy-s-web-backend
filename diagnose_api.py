@@ -9,11 +9,24 @@ from fastapi import APIRouter
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["diagnose"])
 
+# mT5 vocab 兼容处理
+_tokenizer_vocab_size = None
+
+def safe_decode(tokenizer, token_ids, skip_special_tokens=True):
+    """安全解码，忽略超出 tokenizer 词汇表的 token ID"""
+    global _tokenizer_vocab_size
+    if _tokenizer_vocab_size is None:
+        _tokenizer_vocab_size = len(tokenizer)
+    filtered_ids = [tid for tid in token_ids if tid < _tokenizer_vocab_size]
+    if not filtered_ids:
+        return ""
+    return tokenizer.decode(filtered_ids, skip_special_tokens=skip_special_tokens)
+
 
 @router.get("/diagnose/generator/weights")
 async def diagnose_generator_weights():
     """诊断 mT5 生成模型权重和 tokenizer"""
-    from app import model_status, safe_decode
+    from app import model_status
     
     result = {
         "generator_loaded": model_status.generator_loaded
@@ -166,206 +179,55 @@ async def diagnose_model():
     
     result = {
         "status": "running",
-        "steps": []
+        "repo_id": REPO_ID
     }
     
-    # Step 1: 下载 checkpoint
     try:
-        result["steps"].append({"step": "download", "status": "starting"})
+        # 下载 checkpoint
         ckpt_path = hf_hub_download(
             repo_id=REPO_ID,
-            filename="multi_classification_bertmoe.ckpt",
+            filename="rewrite_mT5_small.ckpt",
             token=None
         )
-        result["steps"].append({
-            "step": "download", 
-            "status": "success",
-            "path": str(ckpt_path)
-        })
-    except Exception as e:
-        result["steps"].append({
-            "step": "download", 
-            "status": "error",
-            "error": str(e)
-        })
-        result["status"] = "failed"
-        return result
-    
-    # Step 2: 加载并分析结构
-    try:
-        checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        result["checkpoint_path"] = ckpt_path
         
-        result["checkpoint_keys"] = list(checkpoint.keys())
-        result["steps"].append({
-            "step": "load_checkpoint", 
-            "status": "success"
-        })
-    except Exception as e:
-        result["steps"].append({
-            "step": "load_checkpoint", 
-            "status": "error",
-            "error": str(e)
-        })
-        result["status"] = "failed"
-        return result
-    
-    # Step 3: 分析 state_dict
-    try:
-        if "state_dict" in checkpoint:
-            sd = checkpoint["state_dict"]
-        elif "model_state_dict" in checkpoint:
-            sd = checkpoint["model_state_dict"]
+        # 加载 checkpoint
+        raw_ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        
+        # 提取 state_dict
+        if isinstance(raw_ckpt, dict):
+            if "state_dict" in raw_ckpt:
+                state_dict = raw_ckpt["state_dict"]
+            elif "model_state_dict" in raw_ckpt:
+                state_dict = raw_ckpt["model_state_dict"]
+            else:
+                state_dict = raw_ckpt
+            if "config" in raw_ckpt:
+                result["has_config"] = True
+                result["config"] = raw_ckpt["config"]
+            else:
+                result["has_config"] = False
         else:
-            sd = checkpoint
+            state_dict = raw_ckpt
+            result["has_config"] = False
         
-        result["state_dict_count"] = len(sd)
-        result["state_dict_keys"] = sorted(sd.keys())
-        result["steps"].append({
-            "step": "extract_state_dict", 
-            "status": "success",
-            "count": len(sd)
-        })
-    except Exception as e:
-        result["steps"].append({
-            "step": "extract_state_dict", 
-            "status": "error",
-            "error": str(e)
-        })
-        result["status"] = "failed"
-        return result
-    
-    # Step 4: 分析分类头
-    try:
-        classifier_keys = [k for k in sd.keys() if 'classifier' in k.lower()]
-        result["classifier_keys"] = classifier_keys
-        result["classifier_analysis"] = []
+        result["keys_count"] = len(state_dict)
+        result["key_samples"] = list(state_dict.keys())[:20]
         
-        for k in classifier_keys:
-            t = sd[k]
-            result["classifier_analysis"].append({
-                "key": k,
-                "shape": list(t.shape),
-                "mean": float(t.mean()),
-                "std": float(t.std()),
-                "min": float(t.min()),
-                "max": float(t.max()),
-                "is_zero": bool(abs(t.mean()) < 1e-6),
-                "is_random": bool(0.01 < t.std() < 1.0)
-            })
+        # 检查 lm_head 权重
+        lm_head_keys = [k for k in state_dict.keys() if 'lm_head' in k]
+        result["lm_head_keys"] = lm_head_keys
         
-        result["steps"].append({
-            "step": "analyze_classifier", 
-            "status": "success",
-            "count": len(classifier_keys)
-        })
-    except Exception as e:
-        result["steps"].append({
-            "step": "analyze_classifier", 
-            "status": "error",
-            "error": str(e)
-        })
-    
-    # Step 5: 检查键名前缀
-    try:
-        prefixes = {}
-        for k in sd.keys():
-            prefix = k.split('.')[0] if '.' in k else k
-            prefixes[prefix] = prefixes.get(prefix, 0) + 1
-        
-        result["key_prefixes"] = prefixes
-        result["steps"].append({
-            "step": "analyze_prefixes", 
-            "status": "success"
-        })
-    except Exception as e:
-        result["steps"].append({
-            "step": "analyze_prefixes", 
-            "status": "error",
-            "error": str(e)
-        })
-    
-    # Step 6: 检查 BERT/RoBERTa 主干权重
-    try:
-        embedding_keys = [k for k in sd.keys() if 'embedding' in k.lower()]
-        result["embedding_keys"] = embedding_keys
-        
-        if embedding_keys:
-            t = sd[embedding_keys[0]]
-            result["embedding_sample"] = {
-                "key": embedding_keys[0],
-                "shape": list(t.shape),
-                "mean": float(t.mean()),
-                "std": float(t.std())
-            }
-        
-        result["steps"].append({
-            "step": "analyze_backbone", 
-            "status": "success"
-        })
-    except Exception as e:
-        result["steps"].append({
-            "step": "analyze_backbone", 
-            "status": "error",
-            "error": str(e)
-        })
-    
-    result["status"] = "completed"
-    return result
-
-
-@router.post("/diagnose/load")
-async def test_model_load(test_text: str = "这是一个测试文本"):
-    """
-    测试模型加载和预测
-    返回原始 logits 用于诊断
-    """
-    # 延迟导入避免循环依赖
-    from app import model_status
-    
-    result = {
-        "model_loaded": model_status.classifier_loaded,
-        "tokenizer_type": type(model_status.tokenizer_classifier).__name__ if model_status.tokenizer_classifier else None,
-        "model_type": type(model_status.model_classifier).__name__ if model_status.model_classifier else None,
-        "test_text": test_text
-    }
-    
-    if not model_status.classifier_loaded:
-        result["status"] = "error"
-        result["error"] = "Model not loaded"
-        return result
-    
-    try:
-        # 原始 logits
-        inputs = model_status.tokenizer_classifier(
-            test_text, 
-            return_tensors="pt", 
-            truncation=True, 
-            max_length=512,
-            padding=True
-        )
-        
-        with torch.no_grad():
-            outputs = model_status.model_classifier(**inputs)
-            logits = outputs.logits.squeeze()
-            probs = torch.sigmoid(logits).tolist()
-        
-        result["logits"] = logits.tolist()
-        result["probabilities"] = probs
-        result["predicted_class"] = int(probs.index(max(probs)))
-        result["predicted_prob"] = float(max(probs))
-        
-        # 分析 logits 范围
-        result["logits_analysis"] = {
-            "mean": float(logits.mean()),
-            "std": float(logits.std()),
-            "min": float(logits.min()),
-            "max": float(logits.max()),
-            "all_similar": float(logits.std()) < 0.1  # std 太小说明模型没学到东西
-        }
+        for key in lm_head_keys:
+            tensor = state_dict[key]
+            result[f"lm_head_shape_{key}"] = list(tensor.shape)
         
         result["status"] = "success"
+        
     except Exception as e:
         result["status"] = "error"
         result["error"] = str(e)
+        import traceback
+        result["traceback"] = traceback.format_exc()
     
     return result
