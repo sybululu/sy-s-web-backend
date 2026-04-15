@@ -22,7 +22,7 @@ from fastapi.responses import Response, JSONResponse
 from sqlalchemy.orm import Session
 
 import torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, MT5ForConditionalGeneration, MT5Tokenizer, AutoConfig, MT5Config
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, MT5ForConditionalGeneration, AutoConfig
 from diff_match_patch import diff_match_patch
 
 from models import User, Project, get_db, init_db
@@ -327,13 +327,9 @@ def load_models():
         # 浙大源码第35-36行：直接加载 google/mt5-small 模型和 tokenizer
         logger.info("加载 google/mt5-small 模型和 tokenizer...")
         
-        base_model = MT5ForConditionalGeneration.from_pretrained("google/mt5-small")
-        base_config = base_model.config
-        logger.info(f"google/mt5-small config vocab_size: {base_config.vocab_size}")
-        
-        tokenizer = MT5Tokenizer.from_pretrained("google/mt5-small", use_fast=False)
-        tokenizer_vocab_size = len(tokenizer)
-        logger.info(f"Tokenizer vocab_size: {tokenizer_vocab_size}")
+        # 使用 AutoTokenizer（新版本 transformers）
+        tokenizer = AutoTokenizer.from_pretrained("google/mt5-small")
+        logger.info(f"Tokenizer vocab_size: {len(tokenizer)}")
         logger.info(f"Tokenizer pad_token_id: {tokenizer.pad_token_id}")
         logger.info(f"Tokenizer eos_token_id: {tokenizer.eos_token_id}")
         
@@ -343,8 +339,10 @@ def load_models():
         decoded = tokenizer.decode(test_ids)
         logger.info(f"Tokenizer 测试: '{test_text}' -> {test_ids} -> '{decoded}'")
         
-        # 创建模型结构（使用 base_model 的结构）
-        model = base_model
+        # 直接加载 google/mt5-small 模型
+        model = MT5ForConditionalGeneration.from_pretrained("google/mt5-small")
+        base_config = model.config
+        logger.info(f"google/mt5-small config vocab_size: {base_config.vocab_size}")
         
         # 加载浙大微调的权重
         logger.info("加载浙大微调权重...")
