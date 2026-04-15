@@ -269,6 +269,20 @@ def load_models():
         logger.info("加载checkpoint...")
         raw_ckpt = torch.load(gen_ckpt_path, map_location="cpu", weights_only=False)
         
+        # 探查 checkpoint 完整结构（打印所有顶层键）
+        if isinstance(raw_ckpt, dict):
+            logger.info(f"Checkpoint 顶层键: {list(raw_ckpt.keys())}")
+            for k in raw_ckpt.keys():
+                v = raw_ckpt[k]
+                if isinstance(v, dict):
+                    logger.info(f"  子键数量 [{k}]: {len(v)} keys, 类型: dict")
+                elif isinstance(v, (int, float, str)):
+                    logger.info(f"  值 [{k}]: {v}")
+                else:
+                    import sys
+                    size_mb = sys.getsizeof(v) / (1024*1024)
+                    logger.info(f"  大小 [{k}]: ~{size_mb:.1f} MB, 类型: {type(v).__name__}")
+        
         # 提取 state_dict
         if isinstance(raw_ckpt, dict):
             if "state_dict" in raw_ckpt:
@@ -296,6 +310,11 @@ def load_models():
         
         logger.info(f"键名数量: {len(cleaned_state_dict)}")
         logger.info(f"键名样本: {list(cleaned_state_dict.keys())[:10]}")
+        # 打印完整键名和对应权重形状（诊断用）
+        logger.info("===== 全部权重键名和形状 =====")
+        for i, (k, v) in enumerate(cleaned_state_dict.items()):
+            shape = list(v.shape) if hasattr(v, 'shape') else 'unknown'
+            logger.info(f"  [{i:3d}] {k}: {shape}")
         
         # 关键：必须使用 google/mt5-small 原始的 config 和 tokenizer
         # 因为微调时只是训练权重，原始 tokenizer (vocab_size=250100) 不变
@@ -306,7 +325,7 @@ def load_models():
         logger.info(f"原始 config vocab_size: {config.vocab_size}")
         
         # 从 google/mt5-small 加载原始 tokenizer
-        tokenizer = T5Tokenizer.from_pretrained("google/mt5-small", legacy=True)
+        tokenizer = T5Tokenizer.from_pretrained("google/mt5-small")
         tokenizer_vocab = len(tokenizer)
         logger.info(f"原始 tokenizer vocab_size: {tokenizer_vocab}")
         
