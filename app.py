@@ -332,8 +332,34 @@ def load_models():
         logger.info(f"原始 config vocab_size: {config.vocab_size}")
         
         # 从 google/mt5-small 加载原始 tokenizer
-        tokenizer = AutoTokenizer.from_pretrained("google/mt5-small")
-        logger.info(f"原始 tokenizer vocab_size: {len(tokenizer)}")
+        # 浙大训练时可能用了自定义 tokenizer，先尝试从 repo 下载
+        tokenizer = None
+        tokenizer_files = ["tokenizer.json", "tokenizer_config.json", "spiece.model"]
+        
+        for tokenizer_file in tokenizer_files:
+            try:
+                logger.info(f"尝试下载 tokenizer 文件: {tokenizer_file}")
+                file_path = hf_hub_download(
+                    repo_id=REPO_ID,
+                    filename=tokenizer_file,
+                    token=HF_TOKEN or None
+                )
+                # 使用 AutoTokenizer.from_pretrained 加载本地文件
+                tokenizer = AutoTokenizer.from_pretrained(
+                    file_path.replace(tokenizer_file, ""),  # 目录路径
+                    local_files_only=True
+                )
+                logger.info(f"成功加载自定义 tokenizer: {tokenizer_file}")
+                break
+            except Exception as e:
+                logger.warning(f"无法加载 {tokenizer_file}: {e}")
+        
+        # 如果没有自定义 tokenizer，回退到 google/mt5-small
+        if tokenizer is None:
+            logger.warning("使用默认 google/mt5-small tokenizer")
+            tokenizer = AutoTokenizer.from_pretrained("google/mt5-small")
+        logger.info(f"Tokenizer vocab_size: {len(tokenizer)}")
+        logger.info(f"Tokenizer 类型: {type(tokenizer).__name__}")
         
         # 必须用 vocab_size=250112 创建模型，否则 shared.weight 矩阵维度不匹配
         logger.info(f"使用 config vocab_size={config.vocab_size} 创建模型")
@@ -802,12 +828,18 @@ async def rectify_snippet(
             logger.info(f"生成完成! output_ids shape: {output_ids.shape}")
         
         # 4. 解码
-        logger.info(f"output_ids[0] (前30个): {output_ids[0][:30].tolist()}")
-        logger.info(f"Tokenizer vocab_size: {len(model_status.tokenizer_generator)}")
+        logger.info(f"output_ids shape: {output_ids.shape}")
         
-        # ========== 【彻底修复】逐token解码 + 乱码过滤 ==========
+        # ========== 【详细调试】打印每个token ==========
         tokenizer = model_status.tokenizer_generator
         vocab_size = len(tokenizer)
+        logger.info(f"Tokenizer vocab_size: {vocab_size}")
+        
+        # 打印前20个token的详细信息
+        for i, tid in enumerate(output_ids[0][:20].tolist()):
+            token_text = tokenizer.decode([tid], skip_special_tokens=True) if tid < vocab_size else "<OOV>"
+            status = "OK" if tid < vocab_size else "OOV"
+            logger.info(f"  Token[{i}]: ID={tid}, Text='{token_text}', Status={status}")
         
         # 逐token解码，只保留有效且可读的token
         decoded_tokens = []
