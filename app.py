@@ -285,9 +285,14 @@ def load_models():
         # 打印原始键名样本
         logger.info(f"原始键名样本: {list(state_dict.keys())[:10]}")
         
-        # mT5 的键名格式是 model.xxx，不需要清理前缀
-        # 保持原始格式以确保正确加载
-        cleaned_state_dict = state_dict
+        # 清理键名前缀（checkpoint 用 model.xxx 格式，HuggingFace 期望 xxx 格式）
+        cleaned_state_dict = {}
+        for key, value in state_dict.items():
+            if key.startswith("model."):
+                new_key = key[6:]  # 去掉 "model." 前缀
+            else:
+                new_key = key
+            cleaned_state_dict[new_key] = value
         
         logger.info(f"键名数量: {len(cleaned_state_dict)}")
         logger.info(f"键名样本: {list(cleaned_state_dict.keys())[:10]}")
