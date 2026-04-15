@@ -22,7 +22,7 @@ from fastapi.responses import Response, JSONResponse
 from sqlalchemy.orm import Session
 
 import torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, MT5ForConditionalGeneration, AutoConfig, MT5Config, T5Tokenizer
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, T5ForConditionalGeneration, T5Tokenizer
 from diff_match_patch import diff_match_patch
 
 from models import User, Project, get_db, init_db
@@ -251,110 +251,32 @@ def load_models():
         except Exception as e2:
             logger.error(f"分类模型 Fallback 也失败: {e2}")
     
-    # 3. 加载生成模型 (mT5 small) - 从你的HF仓库加载
+    # 3. 加载生成模型 (Langboat/mengzi-t5-base - 孟子T5中文预训练模型)
     logger.info("-" * 30)
     logger.info("步骤2/2: 加载生成模型...")
     try:
-        from huggingface_hub import hf_hub_download
-        
-        # 下载 checkpoint
-        gen_ckpt_path = hf_hub_download(
-            repo_id=REPO_ID,
-            filename="rewrite_mT5_small.ckpt",
-            token=HF_TOKEN or None
-        )
-        logger.info(f"Checkpoint 已下载: {gen_ckpt_path}")
-        
-        # 加载 checkpoint (用标准torch方式)
-        logger.info("加载checkpoint...")
-        raw_ckpt = torch.load(gen_ckpt_path, map_location="cpu", weights_only=False)
-        
-        # 探查 checkpoint 完整结构（打印所有顶层键）
-        if isinstance(raw_ckpt, dict):
-            logger.info(f"Checkpoint 顶层键: {list(raw_ckpt.keys())}")
-            for k in raw_ckpt.keys():
-                v = raw_ckpt[k]
-                if isinstance(v, dict):
-                    logger.info(f"  子键数量 [{k}]: {len(v)} keys, 类型: dict")
-                elif isinstance(v, (int, float, str)):
-                    logger.info(f"  值 [{k}]: {v}")
-                else:
-                    import sys
-                    size_mb = sys.getsizeof(v) / (1024*1024)
-                    logger.info(f"  大小 [{k}]: ~{size_mb:.1f} MB, 类型: {type(v).__name__}")
-        
-        # 提取 state_dict
-        if isinstance(raw_ckpt, dict):
-            if "state_dict" in raw_ckpt:
-                state_dict = raw_ckpt["state_dict"]
-            elif "model_state_dict" in raw_ckpt:
-                state_dict = raw_ckpt["model_state_dict"]
-            else:
-                state_dict = raw_ckpt
-        else:
-            state_dict = raw_ckpt
-        
-        logger.info(f"原始权重数量: {len(state_dict) if isinstance(state_dict, dict) else 'N/A'}")
-        
-        # 打印原始键名样本
-        logger.info(f"原始键名样本: {list(state_dict.keys())[:10]}")
-        
-        # 清理键名前缀（checkpoint 用 model.xxx 格式，HuggingFace 期望 xxx 格式）
-        cleaned_state_dict = {}
-        for key, value in state_dict.items():
-            if key.startswith("model."):
-                new_key = key[6:]  # 去掉 "model." 前缀
-            else:
-                new_key = key
-            cleaned_state_dict[new_key] = value
-        
-        logger.info(f"键名数量: {len(cleaned_state_dict)}")
-        logger.info(f"键名样本: {list(cleaned_state_dict.keys())[:10]}")
-        # 打印完整键名和对应权重形状（诊断用）
-        logger.info("===== 全部权重键名和形状 =====")
-        for i, (k, v) in enumerate(cleaned_state_dict.items()):
-            shape = list(v.shape) if hasattr(v, 'shape') else 'unknown'
-            logger.info(f"  [{i:3d}] {k}: {shape}")
-        
-        # 关键：必须使用 google/mt5-small 原始的 config 和 tokenizer
-        # 因为微调时只是训练权重，原始 tokenizer (vocab_size=250100) 不变
-        logger.info("获取 mT5 原始 config 和 tokenizer...")
-        
-        # 从 google/mt5-small 加载原始 config（重要！不要用 checkpoint 里的 config）
-        config = MT5Config.from_pretrained("google/mt5-small")
-        logger.info(f"原始 config vocab_size: {config.vocab_size}")
-        
-        # 从 google/mt5-small 加载原始 tokenizer
-        tokenizer = T5Tokenizer.from_pretrained("google/mt5-small")
-        tokenizer_vocab = len(tokenizer)
-        logger.info(f"原始 tokenizer vocab_size: {tokenizer_vocab}")
-        
-        # Config vocab_size (250112) 与 Tokenizer vocab_size (250100) 不同
-        # 微调时保存的 config 被改了，但 tokenizer 仍是原始的 250100
-        # 解决方案：以 config 的 vocab_size 创建模型（匹配权重形状），
-        # 但在推理时只取 tokenizer 范围内的 token
-        actual_model_vocab = config.vocab_size
-        logger.info(f"模型实际 vocab_size (来自权重): {actual_model_vocab}")
-        logger.info(f"Tokenizer vocab_size: {tokenizer_vocab}")
-        
-        model = MT5ForConditionalGeneration(config)
-        
-        # 加载权重
-        logger.info("加载权重...")
-        result = model.load_state_dict(cleaned_state_dict, strict=False)
-        logger.info(f"缺失: {len(result.missing_keys)}, 多余: {len(result.unexpected_keys)}")
-        
+        from transformers import T5Tokenizer, T5ForConditionalGeneration as T5Gen
+
+        MODEL_GEN_ID = "Langboat/mengzi-t5-base"
+        logger.info(f"从 HuggingFace 加载: {MODEL_GEN_ID}...")
+
+        tokenizer = T5Tokenizer.from_pretrained(MODEL_GEN_ID)
+        logger.info(f"Tokenizer vocab_size: {len(tokenizer)}")
+
+        model = T5Gen.from_pretrained(MODEL_GEN_ID)
+        logger.info(f"模型加载成功!")
+
         model.eval()
         model_status.model_generator = model
-        model_status.tokenizer_generator = tokenizer  # 使用上面已加载的 tokenizer
+        model_status.tokenizer_generator = tokenizer
         model_status.generator_loaded = True
         logger.info("生成模型加载成功!")
-        
+
     except Exception as e:
         logger.error(f"生成模型加载失败: {e}")
         import traceback
         traceback.print_exc()
-    
+
     logger.info("=" * 50)
     logger.info("模型加载完成!")
     logger.info(f"  - 分类模型: {'已加载' if model_status.classifier_loaded else '未加载'}")
@@ -751,12 +673,12 @@ async def rectify_snippet(
     # RAG 检索相关法律条款
     legal_context = get_legal_basis_from_rag(request.violation_type, context=request.original_snippet)
     
-    # 使用 mT5 生成整改建议
+    # 使用孟子T5生成整改建议
     if model_status.generator_loaded:
-        # 尝试 A: 最简格式（不带任何法律上下文）
-        prompt = f"rewrite: {request.original_snippet}"
-        logger.info(f"===== mT5 输入 Prompt (尝试A: rewrite格式) =====\n{prompt}\n===== Prompt 结束 =====")
-        
+        violation_name = ID_TO_INDICATOR.get(request.violation_type, "未知违规")
+        prompt = f"根据法律：{legal_context}，修复以下隐私政策中的【{violation_name}】问题，将违规文本改写为合规文本：{request.original_snippet}"
+        logger.info(f"===== 孟子T5 输入 Prompt =====\n{prompt}\n===== Prompt 结束 =====")
+
         inputs = model_status.tokenizer_generator(
             prompt,
             return_tensors="pt",
@@ -766,19 +688,17 @@ async def rectify_snippet(
         )
         device = next(model_status.model_generator.parameters()).device
         inputs = {k: v.to(device) for k, v in inputs.items()}
-        
+
         with torch.no_grad():
             outputs = model_status.model_generator.generate(
                 **inputs,
-                max_new_tokens=150,
+                max_new_tokens=200,
                 num_beams=4,
                 early_stopping=True,
-                no_repeat_ngram_size=3,
-                repetition_penalty=2.0,
-                length_penalty=1.0,
-                min_length=5
+                repetition_penalty=1.5,
+                length_penalty=1.0
             )
-        suggested_text = safe_decode(model_status.tokenizer_generator, outputs[0], skip_special_tokens=True)
+        suggested_text = model_status.tokenizer_generator.decode(outputs[0], skip_special_tokens=True)
         
         # 清理 "rewrite:" 前缀
         suggested_text = suggested_text.replace("rewrite:", "").strip()
