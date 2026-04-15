@@ -323,42 +323,31 @@ def load_models():
         logger.info(f"清理后键名数量: {len(cleaned_state_dict)}")
         logger.info(f"清理后键名样本: {list(cleaned_state_dict.keys())[:5]}")
         
-        # 关键：必须使用 google/mt5-small 原始的 config (vocab_size=250112)
-        # 因为 checkpoint 里的权重是 250112 维度的
-        logger.info("获取 mT5 原始 config...")
+        # 【关键修复】完全还原浙大训练方式
+        # 浙大源码第35-36行：直接加载 google/mt5-small 模型和 tokenizer
+        logger.info("加载 google/mt5-small 模型和 tokenizer...")
         
-        # 从 google/mt5-small 加载原始 config（vocab_size=250112）
-        config = MT5Config.from_pretrained("google/mt5-small")
-        logger.info(f"原始 config vocab_size: {config.vocab_size}")
+        base_model = MT5ForConditionalGeneration.from_pretrained("google/mt5-small")
+        base_config = base_model.config
+        logger.info(f"google/mt5-small config vocab_size: {base_config.vocab_size}")
         
-        # 【关键修复】使用 MT5Tokenizer + 强制不缓存
-        # 注意：google/mt5-small tokenizer vocab_size=250100
-        # 如果模型输出超过此范围，可能是版本问题
-        tokenizer = MT5Tokenizer.from_pretrained(
-            "google/mt5-small",
-            use_fast=False,
-            cache_dir=None  # 不使用缓存
-        )
-        
-        # 验证 tokenizer
+        tokenizer = MT5Tokenizer.from_pretrained("google/mt5-small", use_fast=False)
         tokenizer_vocab_size = len(tokenizer)
         logger.info(f"Tokenizer vocab_size: {tokenizer_vocab_size}")
         logger.info(f"Tokenizer pad_token_id: {tokenizer.pad_token_id}")
         logger.info(f"Tokenizer eos_token_id: {tokenizer.eos_token_id}")
         
-        # 【调试】测试 tokenizer 是否能正确编解码
+        # 【调试】测试 tokenizer 编解码
         test_text = "共享"
         test_ids = tokenizer.encode(test_text)
         decoded = tokenizer.decode(test_ids)
         logger.info(f"Tokenizer 测试: '{test_text}' -> {test_ids} -> '{decoded}'")
         
-        # 必须用 vocab_size=250112 创建模型，否则 shared.weight 矩阵维度不匹配
-        logger.info(f"使用 config vocab_size={config.vocab_size} 创建模型")
+        # 创建模型结构（使用 base_model 的结构）
+        model = base_model
         
-        model = MT5ForConditionalGeneration(config)
-        
-        # 加载权重
-        logger.info("加载权重...")
+        # 加载浙大微调的权重
+        logger.info("加载浙大微调权重...")
         result = model.load_state_dict(cleaned_state_dict, strict=False)
         logger.info(f"缺失: {len(result.missing_keys)}, 多余: {len(result.unexpected_keys)}")
         
