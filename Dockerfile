@@ -1,5 +1,5 @@
-# 使用官方 Python 3.9 轻量级镜像
-FROM python:3.9-slim
+# 使用 Python 3.13 镜像
+FROM python:3.13-slim
 
 # 设置工作目录
 WORKDIR /app
@@ -11,7 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 复制所有代码到工作目录
 COPY . .
 
-# 暴露 Hugging Face Spaces 默认端口 7860
+# 暴露端口
 EXPOSE 7860
 
 # 启动 FastAPI 服务
