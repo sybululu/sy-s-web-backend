@@ -756,32 +756,57 @@ async def rectify_snippet(
     
     # 使用 mT5 生成整改建议
     if model_status.generator_loaded:
-        # 严格遵循浙大作者源码：无冒号无空格，num_beams=3
-        # 原文：tokenizer.encode_plus('summarization' + text[0][:350], ...)
-        original_truncated = request.original_snippet[:350]
-        prompt = f"summarization{original_truncated}"  # 无冒号无空格！
+        # ========== 硬核调试开始 ==========
+        logger.info(f"========== 整改生成开始 ==========")
+        logger.info(f"原始句子: {request.original_snippet[:50]}...")
         
+        # 1. 严格还原作者源码的 Prompt（注意：源码里没有空格，没有冒号！）
+        prompt = f"summarization{request.original_snippet[:350]}" 
+        logger.info(f"Prompt: {prompt[:80]}...")
+        
+        # 2. Tokenize
         inputs = model_status.tokenizer_generator(
-            prompt,
+            prompt, 
             return_tensors="pt",
             truncation=True,
-            max_length=400,
-            padding=True
+            max_length=400
         )
+        logger.info(f"Input IDs shape: {inputs['input_ids'].shape}")
+        logger.info(f"Input IDs first 20: {inputs['input_ids'][0][:20].tolist()}")
         
+        # 3. 生成（先用最快参数）
         with torch.no_grad():
-            # 按照作者源码参数（num_beams降到3以避免CPU死循环）
-            outputs = model_status.model_generator.generate(
-                **inputs, 
-                max_length=250,
-                early_stopping=True,
-                num_beams=3,
-                num_return_sequences=1,
-                no_repeat_ngram_size=2
+            logger.info("开始调用 model.generate()...")
+            output_ids = model_status.model_generator.generate(
+                input_ids=inputs["input_ids"],
+                attention_mask=inputs["attention_mask"],
+                max_length=150,
+                num_beams=1,
+                do_sample=False
             )
-        suggested_text = safe_decode_mt5(model_status.tokenizer_generator, outputs[0].tolist(), skip_special_tokens=True)
+            logger.info(f"生成完成! output_ids shape: {output_ids.shape}")
         
-        logger.info(f"生成结果: {suggested_text[:100]}...")
+        # 4. 原始解码（未过滤）
+        raw_result = model_status.tokenizer_generator.decode(
+            output_ids[0], 
+            skip_special_tokens=True
+        )
+        logger.info(f"原始解码结果: '{raw_result}'")
+        
+        # 5. Token IDs 详情
+        token_list = output_ids[0].tolist()
+        logger.info(f"Token IDs (前20个): {token_list[:20]}")
+        logger.info(f"Token IDs 总数: {len(token_list)}")
+        
+        # 6. safe_decode 过滤后
+        final_result = safe_decode_mt5(
+            model_status.tokenizer_generator, 
+            output_ids[0].tolist()
+        )
+        logger.info(f"safe_decode 过滤后: '{final_result}'")
+        logger.info(f"========== 整改生成结束 ==========")
+        
+        suggested_text = final_result if final_result.strip() else raw_result
     else:
         # Fallback: 返回通用建议
         indicator_name = ID_TO_INDICATOR.get(request.violation_type, "未知违规")
