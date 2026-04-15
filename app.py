@@ -293,18 +293,21 @@ def load_models():
         # 打印原始键名样本
         logger.info(f"原始键名样本: {list(state_dict.keys())[:10]}")
         
-        # mT5 的键名格式是 model.xxx，不需要清理前缀
-        # 保持原始格式以确保正确加载
-        cleaned_state_dict = state_dict
+        # 清理键名前缀：MT5ForConditionalGeneration 期望的键名是 shared.weight 而不是 model.shared.weight
+        logger.info("清理键名前缀...")
+        cleaned_state_dict = {}
+        for k, v in state_dict.items():
+            name = k.replace("model.", "")  # 去掉 model. 前缀
+            cleaned_state_dict[name] = v
         
-        logger.info(f"键名数量: {len(cleaned_state_dict)}")
-        logger.info(f"键名样本: {list(cleaned_state_dict.keys())[:10]}")
+        logger.info(f"清理后键名数量: {len(cleaned_state_dict)}")
+        logger.info(f"清理后键名样本: {list(cleaned_state_dict.keys())[:5]}")
         
-        # 关键：必须使用 google/mt5-small 原始的 config 和 tokenizer
-        # 因为微调时只是训练权重，原始 tokenizer (vocab_size=250100) 不变
-        logger.info("获取 mT5 原始 config 和 tokenizer...")
+        # 关键：必须使用 google/mt5-small 原始的 config (vocab_size=250112)
+        # 因为 checkpoint 里的权重是 250112 维度的
+        logger.info("获取 mT5 原始 config...")
         
-        # 从 google/mt5-small 加载原始 config（重要！不要用 checkpoint 里的 config）
+        # 从 google/mt5-small 加载原始 config（vocab_size=250112）
         config = MT5Config.from_pretrained("google/mt5-small")
         logger.info(f"原始 config vocab_size: {config.vocab_size}")
         
@@ -312,12 +315,7 @@ def load_models():
         tokenizer = AutoTokenizer.from_pretrained("google/mt5-small")
         logger.info(f"原始 tokenizer vocab_size: {len(tokenizer)}")
         
-        # 词表对齐（mT5 官方权重常有微小差异，自动 resize 即可）
-        if config.vocab_size != len(tokenizer):
-            logger.warning(f"检测到词表微小差异: Config({config.vocab_size}) vs Tokenizer({len(tokenizer)})")
-            logger.info("执行词表权重对齐 (Resize Token Embeddings)...")
-            config.vocab_size = len(tokenizer)  # 对齐 config
-        
+        # 必须用原始 vocab_size=250112 创建模型，否则 shared.weight 矩阵维度不匹配
         logger.info(f"Config 和 Tokenizer 匹配: vocab_size={config.vocab_size}")
         
         model = MT5ForConditionalGeneration(config)
@@ -326,6 +324,9 @@ def load_models():
         logger.info("加载权重...")
         result = model.load_state_dict(cleaned_state_dict, strict=False)
         logger.info(f"缺失: {len(result.missing_keys)}, 多余: {len(result.unexpected_keys)}")
+        
+        if len(result.missing_keys) > 10:
+            logger.error(f"权重加载严重失败！缺失 {len(result.missing_keys)} 个键")
         
         model.eval()
         model_status.model_generator = model
