@@ -22,7 +22,7 @@ from fastapi.responses import Response, JSONResponse
 from sqlalchemy.orm import Session
 
 import torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, MT5ForConditionalGeneration, MT5Tokenizer, AutoConfig, MT5Config
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, MT5ForConditionalGeneration, AutoConfig, MT5Config
 from diff_match_patch import diff_match_patch
 
 from models import User, Project, get_db, init_db
@@ -309,7 +309,7 @@ def load_models():
         logger.info(f"原始 config vocab_size: {config.vocab_size}")
         
         # 从 google/mt5-small 加载原始 tokenizer
-        tokenizer = MT5Tokenizer.from_pretrained("google/mt5-small")
+        tokenizer = AutoTokenizer.from_pretrained("google/mt5-small")
         logger.info(f"原始 tokenizer vocab_size: {len(tokenizer)}")
         
         # 验证 vocab_size 必须一致
