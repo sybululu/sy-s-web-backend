@@ -778,10 +778,11 @@ async def rectify_snippet(
             output_ids = model_status.model_generator.generate(
                 input_ids=inputs["input_ids"],
                 attention_mask=inputs["attention_mask"],
-                max_length=250,
-                num_beams=4,                   # 降低到4避免超时（CPU环境）
+                max_length=120,              # 缩短到120，避免模型"发疯"太久
+                num_beams=5,                 # 平衡速度和质量
                 early_stopping=True,
-                no_repeat_ngram_size=2,       # 防止重复循环
+                no_repeat_ngram_size=2,      # 防止连续重复
+                repetition_penalty=2.5,       # 防止反复说同一个词
                 num_return_sequences=1
             )
             logger.info(f"生成完成! output_ids shape: {output_ids.shape}")
