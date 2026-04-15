@@ -747,11 +747,13 @@ async def rectify_snippet(
         with torch.no_grad():
             outputs = model_status.model_generator.generate(
                 **inputs,
-                max_length=512,
+                max_new_tokens=150,
                 num_beams=4,
                 early_stopping=True,
                 no_repeat_ngram_size=3,
-                length_penalty=1.0
+                repetition_penalty=1.5,
+                length_penalty=1.0,
+                min_length=5
             )
         suggested_text = safe_decode(model_status.tokenizer_generator, outputs[0], skip_special_tokens=True)
         
