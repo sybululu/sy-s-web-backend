@@ -22,7 +22,7 @@ from fastapi.responses import Response, JSONResponse
 from sqlalchemy.orm import Session
 
 import torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, T5ForConditionalGeneration, T5Tokenizer
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoConfig, T5ForConditionalGeneration, T5Tokenizer
 from diff_match_patch import diff_match_patch
 
 from models import User, Project, get_db, init_db
