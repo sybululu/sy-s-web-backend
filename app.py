@@ -805,11 +805,17 @@ async def rectify_snippet(
         logger.info(f"output_ids[0] (后20个): {output_ids[0][-20:].tolist()}")
         logger.info(f"Tokenizer vocab_size: {len(model_status.tokenizer_generator)}")
         
-        raw_result = model_status.tokenizer_generator.decode(
-            output_ids[0],
-            skip_special_tokens=True,
-            clean_up_tokenization_spaces=True
-        )
+        # ========== 修复：安全的 token 解码 ==========
+        # 过滤掉超范围的 token ID，防止解码成乱码
+        tokenizer = model_status.tokenizer_generator
+        vocab_size = len(tokenizer)
+        
+        # 过滤 output_ids，只保留有效范围内的 token
+        valid_ids = [tid for tid in output_ids[0].tolist() 
+                     if tid < vocab_size and tid not in tokenizer.all_special_ids]
+        
+        # 用过滤后的 ID 列表解码
+        raw_result = tokenizer.decode(valid_ids, skip_special_tokens=True)
         
         # 5. 后处理：去掉所有空格（作者源码关键步骤！）
         # mT5生成中文时会插入空格，这里全部去掉
