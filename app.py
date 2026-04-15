@@ -29,6 +29,37 @@ from models import User, Project, get_db, init_db
 from auth import router as auth_router, get_current_user
 
 # ==========================================
+# 法律条文核心内容提取函数
+# ==========================================
+def get_legal_core(text: str, max_chars: int = 80) -> str:
+    """
+    从法律条文中提取核心内容（语义压缩策略）
+    寻找"应当"、"不得"、"必须"等核心动词，截取其后的关键义务语句
+    """
+    if not text:
+        return ""
+    
+    # 法律条文中的核心动词（引导核心义务的词）
+    core_signals = ["应当", "不得", "必须", "要求", "严禁", "可以", "有权"]
+    
+    # 寻找第一个出现的动词位置
+    start_idx = 0
+    for signal in core_signals:
+        pos = text.find(signal)
+        if pos != -1:
+            start_idx = pos
+            break
+    
+    # 从动词开始截取一定长度，保证语义连贯
+    core_content = text[start_idx:start_idx + max_chars]
+    
+    # 如果截断了，补上省略号
+    if len(text) > start_idx + max_chars:
+        core_content += "..."
+    
+    return core_content
+
+# ==========================================
 # 配置日志
 # ==========================================
 logging.basicConfig(
@@ -703,12 +734,11 @@ async def rectify_snippet(
     
     # 使用 mT5 生成整改建议
     if model_status.generator_loaded:
-        # 遵循浙大作者源码格式：'summarization' + text（无冒号无空格，原文截断350字符）
-        # 源码：test_tokenized = tokenizer.encode_plus('summarization' + text[0][:350], ...)
-        # 引入RAG：'summarization依据法律{法律标题}：{原文[:350]}'
+        # 遵循浙大作者源码格式：'summarization' + text（无冒号无空格）
+        # RAG 核心提取：提取法律条文的"牙齿"（核心义务）+ 原文
         original_truncated = request.original_snippet[:350]
-        legal_title = legal_context.split('。')[0] if legal_context else ""  # 精简法律依据
-        prompt = f"summarization依据法律{legal_title}：{original_truncated}"
+        legal_core = get_legal_core(legal_context, max_chars=80)  # 提取核心法律义务
+        prompt = f"summarization依据{legal_core}。修改：{original_truncated}"
         
         inputs = model_status.tokenizer_generator(
             prompt,
