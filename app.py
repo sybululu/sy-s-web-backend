@@ -60,6 +60,26 @@ def get_legal_core(text: str, max_chars: int = 80) -> str:
     return core_content
 
 # ==========================================
+# mT5 安全解码函数
+# ==========================================
+_tokenizer_gen_vocab_size = None
+
+def safe_decode_mt5(tokenizer, token_ids, skip_special_tokens=True):
+    """安全解码 mT5 生成的 token ID，过滤超出 tokenizer 词汇表的 ID"""
+    global _tokenizer_gen_vocab_size
+    if _tokenizer_gen_vocab_size is None:
+        _tokenizer_gen_vocab_size = len(tokenizer)
+        logger.info(f"mT5 tokenizer vocab_size: {_tokenizer_gen_vocab_size}")
+    
+    # 过滤掉超出词汇表的 token ID
+    filtered_ids = [tid for tid in token_ids if tid < _tokenizer_gen_vocab_size]
+    
+    if not filtered_ids:
+        return ""
+    
+    return tokenizer.decode(filtered_ids, skip_special_tokens=skip_special_tokens)
+
+# ==========================================
 # 配置日志
 # ==========================================
 logging.basicConfig(
@@ -315,8 +335,8 @@ def load_models():
         tokenizer = AutoTokenizer.from_pretrained("google/mt5-small")
         logger.info(f"原始 tokenizer vocab_size: {len(tokenizer)}")
         
-        # 必须用原始 vocab_size=250112 创建模型，否则 shared.weight 矩阵维度不匹配
-        logger.info(f"Config 和 Tokenizer 匹配: vocab_size={config.vocab_size}")
+        # 必须用 vocab_size=250112 创建模型，否则 shared.weight 矩阵维度不匹配
+        logger.info(f"使用 config vocab_size={config.vocab_size} 创建模型")
         
         model = MT5ForConditionalGeneration(config)
         
@@ -760,7 +780,7 @@ async def rectify_snippet(
                 num_return_sequences=1,
                 no_repeat_ngram_size=2
             )
-        suggested_text = model_status.tokenizer_generator.decode(outputs[0], skip_special_tokens=True, clean_up_tokenization_spaces=True)
+        suggested_text = safe_decode_mt5(model_status.tokenizer_generator, outputs[0].tolist(), skip_special_tokens=True)
         
         logger.info(f"生成结果: {suggested_text[:100]}...")
     else:
