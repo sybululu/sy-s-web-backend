@@ -760,7 +760,8 @@ async def rectify_snippet(
         logger.info(f"========== 整改生成开始 ==========")
         
         # 1. 【关键修复】严格还原作者源码第69行训练格式（有冒号有空格）
-        prompt = f"summarization: {request.original_snippet[:350]}"
+        # 1. 【关键】还原作者源码第69行训练格式（有冒号有空格，长度400）
+        prompt = f"summarization: {request.original_snippet[:400]}"
         logger.info(f"Prompt: {prompt}")
         
         # ========== 调试：测试 tokenizer 分词 ==========
