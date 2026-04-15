@@ -789,14 +789,15 @@ async def rectify_snippet(
         # 3. 生成（严格还原作者源码参数）
         with torch.no_grad():
             logger.info("开始调用 model.generate()...")
+            # 【终极修复】完全还原浙大源码参数（原版 num_beams=10，无 repetition_penalty）
             output_ids = model_status.model_generator.generate(
                 input_ids=inputs["input_ids"],
                 attention_mask=inputs["attention_mask"],
-                max_new_tokens=60,           # 限制生成长度，防止发疯
-                num_beams=5,
-                repetition_penalty=5.0,     # 大幅提高复读惩罚
-                no_repeat_ngram_size=2,
+                max_length=250,               # 还原源码 250
+                num_beams=10,                # 还原源码 10（CPU慢但效果好）
+                no_repeat_ngram_size=2,       # 源码唯一约束
                 early_stopping=True,
+                num_return_sequences=1,
             )
             logger.info(f"生成完成! output_ids shape: {output_ids.shape}")
         
