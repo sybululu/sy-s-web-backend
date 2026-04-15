@@ -22,7 +22,7 @@ from fastapi.responses import Response, JSONResponse
 from sqlalchemy.orm import Session
 
 import torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, MT5ForConditionalGeneration, AutoConfig, MT5Config
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, MT5ForConditionalGeneration, MT5Tokenizer, AutoConfig, MT5Config
 from diff_match_patch import diff_match_patch
 
 from models import User, Project, get_db, init_db
@@ -278,7 +278,7 @@ def load_models():
         logger.info(f"原始 config vocab_size: {config.vocab_size}")
         
         # 从 google/mt5-small 加载原始 tokenizer
-        tokenizer = T5Tokenizer.from_pretrained("google/mt5-small")
+        tokenizer = MT5Tokenizer.from_pretrained("google/mt5-small")
         logger.info(f"原始 tokenizer vocab_size: {len(tokenizer)}")
         
         # 验证 vocab_size 必须一致
@@ -703,30 +703,27 @@ async def rectify_snippet(
     
     # 使用 mT5 生成整改建议
     if model_status.generator_loaded:
-        # mT5 需要 task prefix，格式为 "rewrite: <text>"
-        prompt = "rewrite: 根据以下法律规范修改违规条款。\n法律规范：" + legal_context + "\n违规条款：" + request.original_snippet + "\n整改后："
+        # 遵循浙大作者原版协议：使用 "summarization: " 前缀（模型在 CAPP-130 训练时使用的固定模板）
+        prompt = f"summarization: 根据{legal_context}，修复{request.original_snippet}"
         
         inputs = model_status.tokenizer_generator(
             prompt,
             return_tensors="pt",
             truncation=True,
-            max_length=512,
+            max_length=400,
             padding=True
         )
         
         with torch.no_grad():
+            # 按照作者原版参数：只设置 max_new_tokens，去掉所有额外限制
             outputs = model_status.model_generator.generate(
-                **inputs,
-                max_length=512,
-                num_beams=4,
-                early_stopping=True,
-                no_repeat_ngram_size=3,
-                length_penalty=1.0
+                **inputs, 
+                max_new_tokens=100,
+                decoder_start_token_id=model_status.model_generator.config.decoder_start_token_id,
+                eos_token_id=model_status.tokenizer_generator.eos_token_id,
+                pad_token_id=model_status.tokenizer_generator.pad_token_id
             )
         suggested_text = model_status.tokenizer_generator.decode(outputs[0], skip_special_tokens=True)
-        
-        # 清理 "rewrite:" 前缀
-        suggested_text = suggested_text.replace("rewrite:", "").strip()
         
         logger.info(f"生成结果: {suggested_text[:100]}...")
     else:
