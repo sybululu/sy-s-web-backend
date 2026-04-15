@@ -32,3 +32,4 @@ logs/
 # Cache
 .pytest_cache/
 .coze*/
+python_backend/
