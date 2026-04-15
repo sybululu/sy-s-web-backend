@@ -756,11 +756,10 @@ async def rectify_snippet(
     
     # 使用 mT5 生成整改建议
     if model_status.generator_loaded:
-        # 遵循浙大作者源码格式：'summarization' + text（无冒号无空格）
-        # RAG 核心提取：提取法律条文的"牙齿"（核心义务）+ 原文
+        # 严格遵循浙大作者源码：无冒号无空格，num_beams=3
+        # 原文：tokenizer.encode_plus('summarization' + text[0][:350], ...)
         original_truncated = request.original_snippet[:350]
-        legal_core = get_legal_core(legal_context, max_chars=80)  # 提取核心法律义务
-        prompt = f"summarization依据{legal_core}。修改：{original_truncated}"
+        prompt = f"summarization{original_truncated}"  # 无冒号无空格！
         
         inputs = model_status.tokenizer_generator(
             prompt,
@@ -771,12 +770,12 @@ async def rectify_snippet(
         )
         
         with torch.no_grad():
-            # 按照作者源码参数：num_beams=10, max_length=250, early_stopping=True
+            # 按照作者源码参数（num_beams降到3以避免CPU死循环）
             outputs = model_status.model_generator.generate(
                 **inputs, 
                 max_length=250,
                 early_stopping=True,
-                num_beams=10,
+                num_beams=3,
                 num_return_sequences=1,
                 no_repeat_ngram_size=2
             )
