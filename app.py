@@ -22,34 +22,11 @@ from fastapi.responses import Response, JSONResponse
 from sqlalchemy.orm import Session
 
 import torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoConfig, T5ForConditionalGeneration, T5Tokenizer
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, MT5ForConditionalGeneration, AutoConfig, MT5Config
 from diff_match_patch import diff_match_patch
 
 from models import User, Project, get_db, init_db
 from auth import router as auth_router, get_current_user
-
-
-# ==========================================
-# mT5 生成模型 vocab 兼容处理
-# ==========================================
-# 微调 checkpoint 的 vocab_size=250112，但原始 tokenizer 只有 250100
-# 需要在 decode 时过滤掉超出范围的 token ID
-
-_tokenizer_vocab_size = None  # 缓存 tokenizer vocab size
-
-def safe_decode(tokenizer, token_ids, skip_special_tokens=True):
-    """安全解码，忽略超出 tokenizer 词汇表的 token ID"""
-    global _tokenizer_vocab_size
-    if _tokenizer_vocab_size is None:
-        _tokenizer_vocab_size = len(tokenizer)
-    
-    # 过滤掉超出词汇表的 token ID
-    filtered_ids = [tid for tid in token_ids if tid < _tokenizer_vocab_size]
-    
-    if not filtered_ids:
-        return ""
-    
-    return tokenizer.decode(filtered_ids, skip_special_tokens=skip_special_tokens)
 
 # ==========================================
 # 配置日志
@@ -251,32 +228,84 @@ def load_models():
         except Exception as e2:
             logger.error(f"分类模型 Fallback 也失败: {e2}")
     
-    # 3. 加载生成模型 (Langboat/mengzi-t5-base - 孟子T5中文预训练模型)
+    # 3. 加载生成模型 (mT5 small) - 从你的HF仓库加载
     logger.info("-" * 30)
     logger.info("步骤2/2: 加载生成模型...")
     try:
-        from transformers import T5Tokenizer, T5ForConditionalGeneration as T5Gen
-
-        MODEL_GEN_ID = "Langboat/mengzi-t5-base"
-        logger.info(f"从 HuggingFace 加载: {MODEL_GEN_ID}...")
-
-        tokenizer = T5Tokenizer.from_pretrained(MODEL_GEN_ID)
-        logger.info(f"Tokenizer vocab_size: {len(tokenizer)}")
-
-        model = T5Gen.from_pretrained(MODEL_GEN_ID)
-        logger.info(f"模型加载成功!")
-
+        from huggingface_hub import hf_hub_download
+        
+        # 下载 checkpoint
+        gen_ckpt_path = hf_hub_download(
+            repo_id=REPO_ID,
+            filename="rewrite_mT5_small.ckpt",
+            token=HF_TOKEN or None
+        )
+        logger.info(f"Checkpoint 已下载: {gen_ckpt_path}")
+        
+        # 加载 checkpoint (用标准torch方式)
+        logger.info("加载checkpoint...")
+        raw_ckpt = torch.load(gen_ckpt_path, map_location="cpu", weights_only=False)
+        
+        # 提取 state_dict
+        if isinstance(raw_ckpt, dict):
+            if "state_dict" in raw_ckpt:
+                state_dict = raw_ckpt["state_dict"]
+            elif "model_state_dict" in raw_ckpt:
+                state_dict = raw_ckpt["model_state_dict"]
+            else:
+                state_dict = raw_ckpt
+        else:
+            state_dict = raw_ckpt
+        
+        logger.info(f"原始权重数量: {len(state_dict) if isinstance(state_dict, dict) else 'N/A'}")
+        
+        # 打印原始键名样本
+        logger.info(f"原始键名样本: {list(state_dict.keys())[:10]}")
+        
+        # mT5 的键名格式是 model.xxx，不需要清理前缀
+        # 保持原始格式以确保正确加载
+        cleaned_state_dict = state_dict
+        
+        logger.info(f"键名数量: {len(cleaned_state_dict)}")
+        logger.info(f"键名样本: {list(cleaned_state_dict.keys())[:10]}")
+        
+        # 关键：必须使用 google/mt5-small 原始的 config 和 tokenizer
+        # 因为微调时只是训练权重，原始 tokenizer (vocab_size=250100) 不变
+        logger.info("获取 mT5 原始 config 和 tokenizer...")
+        
+        # 从 google/mt5-small 加载原始 config（重要！不要用 checkpoint 里的 config）
+        config = MT5Config.from_pretrained("google/mt5-small")
+        logger.info(f"原始 config vocab_size: {config.vocab_size}")
+        
+        # 从 google/mt5-small 加载原始 tokenizer
+        tokenizer = T5Tokenizer.from_pretrained("google/mt5-small")
+        logger.info(f"原始 tokenizer vocab_size: {len(tokenizer)}")
+        
+        # 验证 vocab_size 必须一致
+        if config.vocab_size != len(tokenizer):
+            logger.error(f"Config vocab_size ({config.vocab_size}) != Tokenizer vocab_size ({len(tokenizer)})")
+            raise ValueError("Config 和 Tokenizer 的 vocab_size 不匹配!")
+        
+        logger.info(f"Config 和 Tokenizer 匹配: vocab_size={config.vocab_size}")
+        
+        model = MT5ForConditionalGeneration(config)
+        
+        # 加载权重
+        logger.info("加载权重...")
+        result = model.load_state_dict(cleaned_state_dict, strict=False)
+        logger.info(f"缺失: {len(result.missing_keys)}, 多余: {len(result.unexpected_keys)}")
+        
         model.eval()
         model_status.model_generator = model
-        model_status.tokenizer_generator = tokenizer
+        model_status.tokenizer_generator = tokenizer  # 使用上面已加载的 tokenizer
         model_status.generator_loaded = True
         logger.info("生成模型加载成功!")
-
+        
     except Exception as e:
         logger.error(f"生成模型加载失败: {e}")
         import traceback
         traceback.print_exc()
-
+    
     logger.info("=" * 50)
     logger.info("模型加载完成!")
     logger.info(f"  - 分类模型: {'已加载' if model_status.classifier_loaded else '未加载'}")
@@ -471,8 +500,7 @@ def get_legal_basis_from_rag(violation_type: str, context: Optional[str] = None)
         if results:
             legal_refs = []
             for result in results[:2]:
-                # 拼接完整法律依据：法律名 + 条款编号 + 条款正文内容
-                ref = f"{result.law} {result.article_number}：{result.content}"
+                ref = f"{result.law} {result.article_number}"
                 legal_refs.append(ref)
             return "；".join(legal_refs) if legal_refs else INDICATORS.get(
                 ID_TO_INDICATOR.get(violation_type, ""), {}
@@ -673,12 +701,11 @@ async def rectify_snippet(
     # RAG 检索相关法律条款
     legal_context = get_legal_basis_from_rag(request.violation_type, context=request.original_snippet)
     
-    # 使用孟子T5生成整改建议
+    # 使用 mT5 生成整改建议
     if model_status.generator_loaded:
-        violation_name = ID_TO_INDICATOR.get(request.violation_type, "未知违规")
-        prompt = f"根据法律：{legal_context}，修复以下隐私政策中的【{violation_name}】问题，将违规文本改写为合规文本：{request.original_snippet}"
-        logger.info(f"===== 孟子T5 输入 Prompt =====\n{prompt}\n===== Prompt 结束 =====")
-
+        # mT5 需要 task prefix，格式为 "rewrite: <text>"
+        prompt = "rewrite: 根据以下法律规范修改违规条款。\n法律规范：" + legal_context + "\n违规条款：" + request.original_snippet + "\n整改后："
+        
         inputs = model_status.tokenizer_generator(
             prompt,
             return_tensors="pt",
@@ -686,16 +713,14 @@ async def rectify_snippet(
             max_length=512,
             padding=True
         )
-        device = next(model_status.model_generator.parameters()).device
-        inputs = {k: v.to(device) for k, v in inputs.items()}
-
+        
         with torch.no_grad():
             outputs = model_status.model_generator.generate(
                 **inputs,
-                max_new_tokens=200,
+                max_length=512,
                 num_beams=4,
                 early_stopping=True,
-                repetition_penalty=1.5,
+                no_repeat_ngram_size=3,
                 length_penalty=1.0
             )
         suggested_text = model_status.tokenizer_generator.decode(outputs[0], skip_special_tokens=True)
