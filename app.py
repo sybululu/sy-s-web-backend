@@ -753,10 +753,9 @@ async def rectify_snippet(
     
     # 使用 mT5 生成整改建议
     if model_status.generator_loaded:
-        # 精简 prompt，降低格式复杂度；legal_context 现在包含完整正文
-        violation_name = ID_TO_INDICATOR.get(request.violation_type, "未知违规")
-        prompt = f"根据法律：{legal_context}，修复以下隐私政策中的【{violation_name}】问题，将违规文本改写为合规文本：{request.original_snippet}"
-        logger.info(f"===== mT5 输入 Prompt =====\n{prompt}\n===== Prompt 结束 =====")
+        # 尝试 A: 最简格式（不带任何法律上下文）
+        prompt = f"rewrite: {request.original_snippet}"
+        logger.info(f"===== mT5 输入 Prompt (尝试A: rewrite格式) =====\n{prompt}\n===== Prompt 结束 =====")
         
         inputs = model_status.tokenizer_generator(
             prompt,
