@@ -705,8 +705,10 @@ async def rectify_snippet(
     if model_status.generator_loaded:
         # 遵循浙大作者源码格式：'summarization' + text（无冒号无空格，原文截断350字符）
         # 源码：test_tokenized = tokenizer.encode_plus('summarization' + text[0][:350], ...)
+        # 引入RAG：'summarization依据法律{法律标题}：{原文[:350]}'
         original_truncated = request.original_snippet[:350]
-        prompt = f"summarization{original_truncated}"
+        legal_title = legal_context.split('。')[0] if legal_context else ""  # 精简法律依据
+        prompt = f"summarization依据法律{legal_title}：{original_truncated}"
         
         inputs = model_status.tokenizer_generator(
             prompt,
