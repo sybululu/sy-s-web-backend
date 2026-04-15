@@ -789,37 +789,44 @@ async def rectify_snippet(
         # 3. 生成（严格还原作者源码参数）
         with torch.no_grad():
             logger.info("开始调用 model.generate()...")
-            # 【终极修复】完全还原浙大源码参数（原版 num_beams=10，无 repetition_penalty）
+            # 【关键修复】使用 max_new_tokens（从输入结束位置开始生成）
             output_ids = model_status.model_generator.generate(
                 input_ids=inputs["input_ids"],
                 attention_mask=inputs["attention_mask"],
-                max_length=250,               # 还原源码 250
-                num_beams=10,                # 还原源码 10（CPU慢但效果好）
-                no_repeat_ngram_size=2,       # 源码唯一约束
+                max_new_tokens=80,               # 只生成最多80个新token
+                num_beams=5,
+                no_repeat_ngram_size=3,          # 防止3-gram重复
                 early_stopping=True,
                 num_return_sequences=1,
             )
             logger.info(f"生成完成! output_ids shape: {output_ids.shape}")
         
-        # 4. 解码（严格还原作者源码）
-        logger.info(f"output_ids[0] (前20个): {output_ids[0][:20].tolist()}")
-        logger.info(f"output_ids[0] (后20个): {output_ids[0][-20:].tolist()}")
+        # 4. 解码
+        logger.info(f"output_ids[0] (前30个): {output_ids[0][:30].tolist()}")
         logger.info(f"Tokenizer vocab_size: {len(model_status.tokenizer_generator)}")
         
-        # ========== 修复：安全的 token 解码 ==========
-        # 过滤掉超范围的 token ID，防止解码成乱码
+        # ========== 【彻底修复】逐token解码 + 乱码过滤 ==========
         tokenizer = model_status.tokenizer_generator
         vocab_size = len(tokenizer)
         
-        # 过滤 output_ids，只保留有效范围内的 token
-        valid_ids = [tid for tid in output_ids[0].tolist() 
-                     if tid < vocab_size and tid not in tokenizer.all_special_ids]
+        # 逐token解码，只保留有效且可读的token
+        decoded_tokens = []
+        for tid in output_ids[0].tolist():
+            if tid >= vocab_size or tid in tokenizer.all_special_ids:
+                continue  # 跳过超范围和特殊token
+            try:
+                token_text = tokenizer.decode([tid], skip_special_tokens=True)
+                # 过滤掉单字符乱码（主要是拉丁字母和符号）
+                if len(token_text.strip()) > 0 and not token_text.strip().isalpha():
+                    decoded_tokens.append(token_text)
+            except:
+                continue
         
-        # 用过滤后的 ID 列表解码
-        raw_result = tokenizer.decode(valid_ids, skip_special_tokens=True)
+        raw_result = ''.join(decoded_tokens)
+        logger.info(f"过滤后有效token数: {len(decoded_tokens)}")
+        logger.info(f"解码结果: '{raw_result}'")
         
-        # 5. 后处理：去掉所有空格（作者源码关键步骤！）
-        # mT5生成中文时会插入空格，这里全部去掉
+        # 5. 后处理：去掉所有空格
         suggested_text = ''.join(raw_result.split())
         
         logger.info(f"原始解码结果: '{raw_result}'")
