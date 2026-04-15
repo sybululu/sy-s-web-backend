@@ -759,9 +759,9 @@ async def rectify_snippet(
         # ========== 严格还原作者源码 ==========
         logger.info(f"========== 整改生成开始 ==========")
         
-        # 1. 严格还原作者源码的 Prompt（无空格无冒号）
-        prompt = f"summarization{request.original_snippet[:350]}"
-        logger.info(f"Prompt: {prompt[:80]}...")
+        # 1. 【关键修复】严格还原作者源码第69行训练格式（有冒号有空格）
+        prompt = f"summarization: {request.original_snippet[:350]}"
+        logger.info(f"Prompt: {prompt}")
         
         # ========== 调试：测试 tokenizer 分词 ==========
         logger.info("========== Tokenizer 调试开始 ==========")
@@ -792,13 +792,11 @@ async def rectify_snippet(
             output_ids = model_status.model_generator.generate(
                 input_ids=inputs["input_ids"],
                 attention_mask=inputs["attention_mask"],
-                max_length=120,
+                max_new_tokens=60,           # 限制生成长度，防止发疯
                 num_beams=5,
-                early_stopping=True,
+                repetition_penalty=5.0,     # 大幅提高复读惩罚
                 no_repeat_ngram_size=2,
-                repetition_penalty=3.5,
-                eos_token_id=model_status.tokenizer_generator.eos_token_id,
-                num_return_sequences=1
+                early_stopping=True,
             )
             logger.info(f"生成完成! output_ids shape: {output_ids.shape}")
         
