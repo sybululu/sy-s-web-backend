@@ -703,8 +703,10 @@ async def rectify_snippet(
     
     # 使用 mT5 生成整改建议
     if model_status.generator_loaded:
-        # 遵循浙大作者原版协议：使用 "summarization: " 前缀（模型在 CAPP-130 训练时使用的固定模板）
-        prompt = f"summarization: 根据{legal_context}，修复{request.original_snippet}"
+        # 遵循浙大作者源码格式：'summarization' + text（无冒号无空格，原文截断350字符）
+        # 源码：test_tokenized = tokenizer.encode_plus('summarization' + text[0][:350], ...)
+        original_truncated = request.original_snippet[:350]
+        prompt = f"summarization{original_truncated}"
         
         inputs = model_status.tokenizer_generator(
             prompt,
