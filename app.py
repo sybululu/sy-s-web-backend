@@ -22,7 +22,7 @@ from fastapi.responses import Response, JSONResponse
 from sqlalchemy.orm import Session
 
 import torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, MT5ForConditionalGeneration, AutoConfig, MT5Config
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, MT5ForConditionalGeneration, MT5Tokenizer, AutoConfig, MT5Config
 from diff_match_patch import diff_match_patch
 
 from models import User, Project, get_db, init_db
@@ -331,9 +331,26 @@ def load_models():
         config = MT5Config.from_pretrained("google/mt5-small")
         logger.info(f"原始 config vocab_size: {config.vocab_size}")
         
-        # 【关键】直接使用 google/mt5-small tokenizer（与作者源码一致）
-        tokenizer = AutoTokenizer.from_pretrained("google/mt5-small")
-        logger.info(f"Tokenizer vocab_size: {len(tokenizer)}")
+        # 【关键修复】使用 MT5Tokenizer + 强制不缓存
+        # 注意：google/mt5-small tokenizer vocab_size=250100
+        # 如果模型输出超过此范围，可能是版本问题
+        tokenizer = MT5Tokenizer.from_pretrained(
+            "google/mt5-small",
+            use_fast=False,
+            cache_dir=None  # 不使用缓存
+        )
+        
+        # 验证 tokenizer
+        tokenizer_vocab_size = len(tokenizer)
+        logger.info(f"Tokenizer vocab_size: {tokenizer_vocab_size}")
+        logger.info(f"Tokenizer pad_token_id: {tokenizer.pad_token_id}")
+        logger.info(f"Tokenizer eos_token_id: {tokenizer.eos_token_id}")
+        
+        # 【调试】测试 tokenizer 是否能正确编解码
+        test_text = "共享"
+        test_ids = tokenizer.encode(test_text)
+        decoded = tokenizer.decode(test_ids)
+        logger.info(f"Tokenizer 测试: '{test_text}' -> {test_ids} -> '{decoded}'")
         
         # 必须用 vocab_size=250112 创建模型，否则 shared.weight 矩阵维度不匹配
         logger.info(f"使用 config vocab_size={config.vocab_size} 创建模型")
