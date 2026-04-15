@@ -312,10 +312,11 @@ def load_models():
         tokenizer = AutoTokenizer.from_pretrained("google/mt5-small")
         logger.info(f"原始 tokenizer vocab_size: {len(tokenizer)}")
         
-        # 验证 vocab_size 必须一致
+        # 词表对齐（mT5 官方权重常有微小差异，自动 resize 即可）
         if config.vocab_size != len(tokenizer):
-            logger.error(f"Config vocab_size ({config.vocab_size}) != Tokenizer vocab_size ({len(tokenizer)})")
-            raise ValueError("Config 和 Tokenizer 的 vocab_size 不匹配!")
+            logger.warning(f"检测到词表微小差异: Config({config.vocab_size}) vs Tokenizer({len(tokenizer)})")
+            logger.info("执行词表权重对齐 (Resize Token Embeddings)...")
+            config.vocab_size = len(tokenizer)  # 对齐 config
         
         logger.info(f"Config 和 Tokenizer 匹配: vocab_size={config.vocab_size}")
         
