@@ -735,6 +735,7 @@ async def rectify_snippet(
     if model_status.generator_loaded:
         # mT5 需要 task prefix，格式为 "rewrite: <text>"
         prompt = "rewrite: 根据以下法律规范修改违规条款。\n法律规范：" + legal_context + "\n违规条款：" + request.original_snippet + "\n整改后："
+        logger.info(f"===== mT5 输入 Prompt =====\n{prompt}\n===== Prompt 结束 =====")
         
         inputs = model_status.tokenizer_generator(
             prompt,
@@ -743,6 +744,8 @@ async def rectify_snippet(
             max_length=512,
             padding=True
         )
+        device = next(model_status.model_generator.parameters()).device
+        inputs = {k: v.to(device) for k, v in inputs.items()}
         
         with torch.no_grad():
             outputs = model_status.model_generator.generate(
@@ -751,7 +754,7 @@ async def rectify_snippet(
                 num_beams=4,
                 early_stopping=True,
                 no_repeat_ngram_size=3,
-                repetition_penalty=1.5,
+                repetition_penalty=2.0,
                 length_penalty=1.0,
                 min_length=5
             )
