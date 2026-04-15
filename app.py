@@ -763,6 +763,20 @@ async def rectify_snippet(
         prompt = f"summarization{request.original_snippet[:350]}"
         logger.info(f"Prompt: {prompt[:80]}...")
         
+        # ========== 调试：测试 tokenizer 分词 ==========
+        logger.info("========== Tokenizer 调试开始 ==========")
+        test_text = request.original_snippet[:100]
+        test_tokens = model_status.tokenizer_generator.tokenize(test_text)
+        logger.info(f"原始文本: {test_text}")
+        logger.info(f"分词结果 ({len(test_tokens)} tokens): {test_tokens[:50]}")
+        test_ids = model_status.tokenizer_generator(test_text, return_tensors="pt")
+        logger.info(f"编码 shape: {test_ids['input_ids'].shape}")
+        logger.info(f"编码 IDs: {test_ids['input_ids'][0].tolist()[:20]}")
+        logger.info(f"解码验证: {model_status.tokenizer_generator.decode(test_ids['input_ids'][0], skip_special_tokens=True)}")
+        logger.info(f"Tokenizer vocab_size: {len(model_status.tokenizer_generator)}")
+        logger.info("========== Tokenizer 调试结束 ==========")
+        # ========== 调试结束 ==========
+        
         # 2. Tokenize（严格还原作者源码）
         inputs = model_status.tokenizer_generator(
             prompt,
@@ -789,6 +803,10 @@ async def rectify_snippet(
             logger.info(f"生成完成! output_ids shape: {output_ids.shape}")
         
         # 4. 解码（严格还原作者源码）
+        logger.info(f"output_ids[0] (前20个): {output_ids[0][:20].tolist()}")
+        logger.info(f"output_ids[0] (后20个): {output_ids[0][-20:].tolist()}")
+        logger.info(f"Tokenizer vocab_size: {len(model_status.tokenizer_generator)}")
+        
         raw_result = model_status.tokenizer_generator.decode(
             output_ids[0],
             skip_special_tokens=True,
