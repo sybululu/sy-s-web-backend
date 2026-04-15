@@ -715,15 +715,16 @@ async def rectify_snippet(
         )
         
         with torch.no_grad():
-            # 按照作者原版参数：只设置 max_new_tokens，去掉所有额外限制
+            # 按照作者源码参数：num_beams=10, max_length=250, early_stopping=True
             outputs = model_status.model_generator.generate(
                 **inputs, 
-                max_new_tokens=100,
-                decoder_start_token_id=model_status.model_generator.config.decoder_start_token_id,
-                eos_token_id=model_status.tokenizer_generator.eos_token_id,
-                pad_token_id=model_status.tokenizer_generator.pad_token_id
+                max_length=250,
+                early_stopping=True,
+                num_beams=10,
+                num_return_sequences=1,
+                no_repeat_ngram_size=2
             )
-        suggested_text = model_status.tokenizer_generator.decode(outputs[0], skip_special_tokens=True)
+        suggested_text = model_status.tokenizer_generator.decode(outputs[0], skip_special_tokens=True, clean_up_tokenization_spaces=True)
         
         logger.info(f"生成结果: {suggested_text[:100]}...")
     else:
