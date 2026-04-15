@@ -167,6 +167,75 @@ async def test_mt5_generate(test_input: str = "这是一个隐私政策条款"):
     
     return result
 
+
+@router.post("/diagnose/test-original-mt5")
+async def test_original_mt5(test_input: str = "我们收集您的个人信息用于改善服务"):
+    """
+    测试原始 mT5-small 模型（不带微调权重）
+    用于对比：确认是模型问题还是微调权重问题
+    """
+    try:
+        from transformers import MT5ForConditionalGeneration, T5Tokenizer
+        
+        logger.info("加载原始 mT5-small 模型...")
+        model = MT5ForConditionalGeneration.from_pretrained("google/mt5-small")
+        tokenizer = T5Tokenizer.from_pretrained("google/mt5-small", legacy=True)
+        model.eval()
+        
+        # 测试多种 prompt 格式
+        prompts = [
+            f"rewrite: {test_input}",
+            f"将以下文本改写得更规范：{test_input}",
+            f"refactor: {test_input}",
+            test_input,
+            f"summarize: {test_input}",
+        ]
+        
+        results = []
+        for i, prompt in enumerate(prompts):
+            inputs = tokenizer(
+                prompt,
+                return_tensors="pt",
+                truncation=True,
+                max_length=256,
+                padding=True
+            )
+            
+            with torch.no_grad():
+                outputs = model.generate(
+                    **inputs,
+                    max_length=256,
+                    num_beams=4,
+                    early_stopping=True,
+                    do_sample=False
+                )
+            
+            generated = tokenizer.decode(outputs[0], skip_special_tokens=True)
+            
+            results.append({
+                "prompt": prompt,
+                "generated": generated,
+                "length": len(generated)
+            })
+            logger.info(f"[原始模型] Prompt {i}: {prompt[:30]}... -> {generated[:50]}...")
+        
+        return {
+            "status": "success",
+            "model": "google/mt5-small",
+            "tokenizer_vocab_size": len(tokenizer),
+            "results": results
+        }
+        
+    except Exception as e:
+        logger.error(f"原始模型测试失败: {e}")
+        import traceback
+        return {
+            "status": "error",
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
+
 @router.get("/diagnose/model")
 async def diagnose_model():
     """
