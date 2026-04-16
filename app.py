@@ -507,9 +507,10 @@ class UrlRequest(BaseModel):
 # 辅助函数
 # ==========================================
 def split_into_sentences(text: str) -> List[str]:
-    """将文本分割成句子"""
-    sentences = re.split(r'[。；！？；\n]+', text)
-    return [s.strip() for s in sentences if len(s.strip()) > 5]
+    """将文本分割成句子（只按句号/换行，不按逗号/分号）"""
+    # 只按句号、感叹号、问号、换行切分，保留完整句子
+    sentences = re.split(r'[。！？\n]+', text)
+    return [s.strip() for s in sentences if len(s.strip()) > 10]  # 至少10字符才保留
 
 def roberta_predict(sentence: str) -> List[float]:
     """使用 RoBERTa 分类模型预测"""
@@ -677,20 +678,18 @@ async def analyze(
     """
     sentences = split_into_sentences(request.text)
     violations_list = []
-    all_violation_ids = set()
+    all_violation_ids = {}  # 改为dict，保留每个违规类型的所有句子
+    all_snippets = []  # 所有句子及其分类结果
     
-    for sentence in sentences:
+    for idx, sentence in enumerate(sentences):
         # BERT-MoE 分类预测
         probs = roberta_predict(sentence)
         
         # 11类 → 12类 映射
-        # 阈值降低以适应模型输出分布（模型输出在 0.42-0.62 之间）
         THRESHOLD = 0.40
         if map_to_12_classes is not None:
             violation_ids = map_to_12_classes(probs)
         else:
-            # Fallback: 使用概率最高的类别（即使低于 0.5）
-            # 原始11类直接映射到I1-I11（跳过I12）
             ID_MAPPING_FALLBACK = {
                 0: "I1", 1: "I2", 2: "I3", 3: "I4", 4: "I5",
                 5: "I6", 6: "I7", 7: "I8", 8: "I9", 9: "I10", 10: "I11"
@@ -704,26 +703,44 @@ async def analyze(
                     if v_id:
                         violation_ids = [v_id]
         
+        # 记录所有句子的分类结果
+        max_idx = probs.index(max(probs)) if probs else 0
+        max_prob = probs[max_idx] if probs else 0
+        all_snippets.append({
+            "id": idx,
+            "text": sentence,
+            "predicted_class": max_idx,
+            "predicted_class_name": ["数据收集", "权限获取", "共享转让", "使用", "存储方式", "安全措施", "特殊人群", "权限管理", "联系方式", "政策变更", "停止运营"][max_idx] if max_idx < 11 else "其他",
+            "confidence": round(max_prob, 4),
+            "violation_ids": violation_ids
+        })
+        
         for v_id in violation_ids:
             indicator_name = ID_TO_INDICATOR.get(v_id)
-            if indicator_name and v_id not in all_violation_ids:
-                all_violation_ids.add(v_id)
+            if indicator_name:
+                # 使用dict保留每个违规类型的所有句子（不去重）
+                if v_id not in all_violation_ids:
+                    all_violation_ids[v_id] = []
                 
                 # RAG 获取法律依据
                 legal_basis = get_legal_basis_from_rag(v_id, context=sentence)
                 
-                violations_list.append({
+                all_violation_ids[v_id].append({
                     "indicator": indicator_name,
                     "violation_name": indicator_name,
                     "violation_id": v_id,
-                    "category_name": indicator_name,  # 中文名称用于显示
+                    "category_name": indicator_name,
                     "snippet": sentence,
                     "legal_basis": legal_basis,
-                    "confidence": round(probs[min(violation_ids.index(v_id), len(probs)-1)] if violation_ids else 0.5, 3)
+                    "confidence": round(max_prob, 4)
                 })
     
-    # 计算合规评分
-    score, risk_level = calculate_compliance_score(list(all_violation_ids))
+    # 汇总所有违规（保留每个违规类型下的所有句子）
+    for v_id, v_list in all_violation_ids.items():
+        violations_list.extend(v_list)
+    
+    # 计算合规评分（基于违规类型数量）
+    score, risk_level = calculate_compliance_score(list(all_violation_ids.keys()))
     
     # 生成项目
     project_id = f"p{int(datetime.utcnow().timestamp())}"
@@ -746,6 +763,7 @@ async def analyze(
         "score": score,
         "risk_level": risk_level,
         "violations": violations_list,
+        "all_snippets": all_snippets,  # 返回所有句子的分类结果
         "created_at": project.created_at.isoformat()
     }
 
