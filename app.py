@@ -765,14 +765,14 @@ async def rectify_snippet(
     if model_status.generator_loaded:
         logger.info(f"========== 整改生成开始 ==========")
         
-        # 【关键】构造"三合一"最强 Prompt：标签 + 法律依据 + 原句
+        # 【关键】构造"三合一"最强 Prompt：标签 + 法律依据 + 原句 + 触发词
         # 给模型足够的上下文，逼它"整改"而不是"摘要"
         full_context = ""
         if indicator_name:
             full_context += f"违规类型：{indicator_name}。 "
         if legal_context:
             full_context += f"法律依据：{legal_context}。 "
-        full_context += f"原文：{request.original_snippet[:350]}"
+        full_context += f"原文：{request.original_snippet[:300]} 修改建议："
         
         prompt = f"summarization: {full_context}"
         logger.info(f"Prompt: {prompt[:200]}...")
@@ -786,16 +786,17 @@ async def rectify_snippet(
         )
         logger.info(f"Input IDs shape: {inputs['input_ids'].shape}")
         
-        # 生成 - 加入 repetition_penalty 防止原样复读
+        # 生成 - 【暴力破解复读】加大 repetition_penalty
         with torch.no_grad():
             logger.info("开始调用 model.generate()...")
             output_ids = model_status.model_generator.generate(
                 input_ids=inputs["input_ids"],
                 attention_mask=inputs["attention_mask"],
-                max_length=250,
+                max_new_tokens=128,
                 num_beams=10,
                 no_repeat_ngram_size=2,
-                repetition_penalty=1.5,           # 防止原样复读
+                repetition_penalty=2.5,           # 【关键】暴力惩罚复读
+                length_penalty=0.8,               # 惩罚过长输出
                 early_stopping=True,
                 num_return_sequences=1,
             )
