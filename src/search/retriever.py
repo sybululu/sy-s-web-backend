@@ -81,33 +81,32 @@ class Retriever:
             logger.warning(f"未找到违规类型 {violation_type} 的映射条款")
             return []
         
-        # 2. 使用向量检索获取语义相似的结果
+        # 2. 使用向量检索获取语义相似的结果（优先使用context）
         search_results = self.vector_store.search_by_violation(
             violation_type, 
             context=context,
-            top_k=top_k
+            top_k=top_k * 2  # 多检索一些以便合并
         )
         
-        # 3. 合并结果
+        # 3. 合并结果，按相关度排序
         results = []
         seen_ids = set()
         
-        # 优先添加映射的条款
-        for article in related_articles:
-            results.append(self._article_to_search_result(article))
-            seen_ids.add(article.article_id)
+        # 如果有向量检索结果，按相关度排序
+        if search_results:
+            for chunk in search_results:
+                article_id = chunk.metadata.get("article_id")
+                if article_id and article_id not in seen_ids:
+                    article = self.loader.get_article(article_id)
+                    if article:
+                        results.append(self._article_to_search_result(article, chunk.score))
+                        seen_ids.add(article_id)
         
-        # 添加向量检索结果
-        for chunk in search_results:
-            article_id = chunk.metadata.get("article_id")
-            if article_id and article_id not in seen_ids:
-                article = self.loader.get_article(article_id)
-                if article:
-                    results.append(self._article_to_search_result(article, chunk.score))
-                    seen_ids.add(article_id)
-            
-            if len(results) >= top_k + len(related_articles):
-                break
+        # 添加映射条款中未被向量检索包含的（补满top_k）
+        for article in related_articles:
+            if article.article_id not in seen_ids and len(results) < top_k:
+                results.append(self._article_to_search_result(article))
+                seen_ids.add(article.article_id)
         
         return results[:top_k]
     
