@@ -818,28 +818,8 @@ async def rectify_snippet(
     if model_status.generator_loaded:
         logger.info(f"========== 整改生成开始 ==========")
         
-        # RAG 检索获取法条，手动映射为 action_tag
-        legal_context = get_legal_basis_from_rag(request.violation_type, context=f"{indicator_name} {request.original_snippet}")
-        
-        # 手动映射 RAG 法条 → action_tag（翻译成模型能听懂的指令）
-        ACTION_TAGS = {
-            "I1": "最小必要收集",           # 过度收集 → 最小必要
-            "I2": "明确告知目的",            # 未说明目的 → 告知目的
-            "I3": "取得同意授权",            # 未获同意 → 取得同意
-            "I4": "单独明示同意",            # 敏感信息 → 单独同意
-            "I5": "告知共享目的并取得同意",   # 第三方共享 → 告知并同意
-            "I6": "单独授权处理",            # 敏感授权 → 单独授权
-            "I7": "明确保存期限",            # 未定期限 → 明确期限
-            "I8": "数据最小化",             # 超范围收集 → 数据最小化
-            "I9": "增加安全措施说明",        # 未说明安全 → 说明措施
-            "I10": "明确用户权利",           # 未保障权利 → 明确权利
-            "I11": "提供便捷投诉",           # 无投诉渠道 → 提供渠道
-            "I12": "规定响应时限",           # 未响应时限 → 及时响应
-        }
-        action_tag = ACTION_TAGS.get(request.violation_type, "合规改写")
-        
-        # Prompt：[微调指令] [RAG提取出的短动作] [原文] [人工起始符]
-        prompt = f"summarization: [合规改写方向：{action_tag}] 原文：{request.original_snippet[:50]}。重写为通俗合规的表述："
+        # 最简 Prompt
+        prompt = f"summarization: {request.original_snippet[:60]}"
         
         logger.info(f"Prompt: {prompt}")
         
