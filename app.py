@@ -788,7 +788,7 @@ async def rectify_snippet(
     current_user: User = Depends(get_current_user)
 ):
     """生成违规条款的整改建议"""
-    # 【修复】RAG检索时加入分类标签，引导检索方向
+    # RAG 获取法律依据
     indicator_name = ID_TO_INDICATOR.get(request.violation_type, "")
     legal_context = get_legal_basis_from_rag(request.violation_type, context=f"{indicator_name} {request.original_snippet}")
     
@@ -796,10 +796,15 @@ async def rectify_snippet(
     if model_status.generator_loaded:
         logger.info(f"========== 整改生成开始 ==========")
         
-        # 【关键修复】精简Prompt，去除中文标签干扰
-        # 使用 summarization 格式（checkpoint 用 summarization 作为 prefix，但实际数据是改写）
-        # 不加法律条款，避免幻觉
-        prompt = f"summarization: {request.original_snippet[:200]}"
+        # 构建 Prompt：法律依据 + 违规条款
+        # 格式：summarization: {法律摘要}。原条款：{违规条款}
+        # 法律摘要只取核心要求，限制长度避免幻觉
+        if legal_context:
+            # 简化法律条款，只取法律名称和核心要求
+            legal_summary = legal_context.split('：')[0] if '：' in legal_context else legal_context[:50]
+            prompt = f"summarization: {legal_summary}。原条款：{request.original_snippet[:150]}"
+        else:
+            prompt = f"summarization: {request.original_snippet[:200]}"
         
         logger.info(f"Prompt: {prompt[:200]}...")
         
