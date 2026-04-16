@@ -553,6 +553,40 @@ def roberta_predict(sentence: str) -> tuple:
     
     return probs, confidence
 
+def extract_legal_keywords(violation_type: str, context: Optional[str] = None) -> str:
+    """从 RAG 检索结果中提取关键词用于语义注入"""
+    if not RAG_AVAILABLE or retriever is None:
+        # 回退到静态关键词映射
+        KEYWORD_MAP = {
+            "I1": "最小必要,服务相关",
+            "I2": "明确目的,告知义务",
+            "I3": "取得同意,明示授权",
+            "I4": "敏感信息,单独同意",
+            "I5": "第三方共享,明确告知",
+            "I6": "单独授权,书面同意",
+            "I7": "明确期限,最小存储",
+            "I8": "告知目的,合理范围",
+            "I9": "删除机制,及时销毁",
+            "I10": "访问权,更正权,删除权",
+            "I11": "便捷途径,投诉渠道",
+            "I12": "响应时限,及时处理",
+        }
+        return KEYWORD_MAP.get(violation_type, "合法合规")
+    
+    try:
+        results = retriever.retrieve_by_violation_type(violation_type, context=context, top_k=1)
+        if results:
+            # 从第一条结果中提取关键词（取标题中的核心词）
+            result = results[0]
+            # 提取法律名+条款号作为标识
+            keywords = result.content.split('。')[0][:50] if result.content else ""
+            return keywords
+    except Exception as e:
+        logger.error(f"提取关键词失败: {e}")
+    
+    return "合法合规"
+
+
 def get_legal_basis_from_rag(violation_type: str, context: Optional[str] = None) -> str:
     """使用 RAG 检索获取法律依据（包含完整条款内容）"""
     if not RAG_AVAILABLE or retriever is None:
@@ -791,19 +825,15 @@ async def rectify_snippet(
     # RAG 获取法律依据
     indicator_name = ID_TO_INDICATOR.get(request.violation_type, "")
     legal_context = get_legal_basis_from_rag(request.violation_type, context=f"{indicator_name} {request.original_snippet}")
+    legal_keywords = extract_legal_keywords(request.violation_type, context=f"{indicator_name} {request.original_snippet}")
     
     # 使用 mT5 生成整改建议
     if model_status.generator_loaded:
         logger.info(f"========== 整改生成开始 ==========")
         
-        # 构建 Prompt：简化版，只给法律原则（避免模型幻觉）
-        # 格式：summarization: {简化法律原则} 隐私政策：{违规条款}
-        if legal_context:
-            # 只提取关键词作为法律原则提示
-            legal_summary = legal_context.split('：')[0] if '：' in legal_context else legal_context[:30]
-            prompt = f"summarization: 隐私政策应遵循：{legal_summary}。原文：{request.original_snippet[:150]}"
-        else:
-            prompt = f"summarization: 隐私政策：{request.original_snippet[:180]}"
+        # 构建 Prompt：语义注入法，用关键词引导模型
+        # 格式：summarization: 原则:最小必要 操作:明确告知 原文:违规条款
+        prompt = f"summarization: {legal_keywords} 原文:{request.original_snippet[:150]}"
         
         logger.info(f"Prompt: {prompt[:200]}...")
         
