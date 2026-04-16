@@ -798,11 +798,11 @@ async def rectify_snippet(
         
         # 构建 Prompt：法律依据 + 违规条款
         # 格式：summarization: {法律摘要}。原条款：{违规条款}
-        # 法律摘要只取核心要求，限制长度避免幻觉
+        # 法律摘要只取前100字作为核心要求，避免幻觉
         if legal_context:
-            # 简化法律条款，只取法律名称和核心要求
-            legal_summary = legal_context.split('：')[0] if '：' in legal_context else legal_context[:50]
-            prompt = f"summarization: {legal_summary}。原条款：{request.original_snippet[:150]}"
+            # 简化法律条款，只取核心内容（到第一个句号或取前100字）
+            legal_summary = legal_context.split('。')[0] + '。' if '。' in legal_context else legal_context[:100]
+            prompt = f"summarization: {legal_summary} 原条款：{request.original_snippet[:150]}"
         else:
             prompt = f"summarization: {request.original_snippet[:200]}"
         
