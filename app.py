@@ -835,8 +835,24 @@ async def rectify_snippet(
         logger.info(f"========== 整改生成开始 ==========")
         
         # 构建 Prompt：action_tag 引导改写
-        # 格式2: 更直接的改写指令
-        prompt = f"将以下隐私政策改写为合规版本：{request.original_snippet[:80]}"
+        # 格式3: 包含具体合规要求的 Prompt
+        # 根据违规类型给出具体的合规要求
+        COMPLIANCE_REQUIREMENTS = {
+            "I1": "遵循最小必要原则，只收集与服务相关的个人信息",
+            "I2": "明确说明收集个人信息的目的",
+            "I3": "说明合法性依据并取得用户同意",
+            "I4": "处理敏感个人信息需单独明示同意",
+            "I5": "向用户告知接收方并取得单独同意",
+            "I6": "处理敏感信息需单独授权",
+            "I7": "明确个人信息保存期限",
+            "I8": "遵循数据最小化原则",
+            "I9": "说明数据安全保护措施",
+            "I10": "明确用户各项权利及行使方式",
+            "I11": "提供便捷的投诉和举报渠道",
+            "I12": "承诺在规定时限内响应用户请求",
+        }
+        requirement = COMPLIANCE_REQUIREMENTS.get(request.violation_type, "确保合规")
+        prompt = f"改写隐私政策条款，使其符合法律要求。法律要求：{requirement}。原文：{request.original_snippet[:80]}"
         
         logger.info(f"Prompt: {prompt[:200]}...")
         
