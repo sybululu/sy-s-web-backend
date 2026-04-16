@@ -797,8 +797,9 @@ async def rectify_snippet(
         logger.info(f"========== 整改生成开始 ==========")
         
         # 【关键修复】精简Prompt，去除中文标签干扰
-        # 使用 rewrite 任务格式（浙大微调的是改写任务，不是摘要）
-        prompt = f"rewrite: {request.original_snippet[:200]}"
+        # 使用 summarization 格式（checkpoint 用 summarization 作为 prefix，但实际数据是改写）
+        # 不加法律条款，避免幻觉
+        prompt = f"summarization: {request.original_snippet[:200]}"
         
         logger.info(f"Prompt: {prompt[:200]}...")
         
