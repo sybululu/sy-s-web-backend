@@ -797,12 +797,9 @@ async def rectify_snippet(
         logger.info(f"========== 整改生成开始 ==========")
         
         # 【关键修复】精简Prompt，去除中文标签干扰
-        # 优化 Prompt：原文 + 法律依据，给模型更多上下文
-        # 格式：summarization: {违规条款} 法律要求：{相关法律条款}
-        prompt = f"summarization: {request.original_snippet[:200]}"
-        if legal_context:
-            # 法律条款内容可能较长，截取前150字符确保不超长
-            prompt += f" 法律要求：{legal_context[:150]}"
+        # 修改 Prompt：明确告诉模型"改写成简洁合规版本"
+        # 由于 mT5 微调任务是 summarization，所以让模型做简化改写
+        prompt = f"请将以下隐私政策改写得更简洁合规：{request.original_snippet[:200]}"
         
         logger.info(f"Prompt: {prompt[:200]}...")
         
