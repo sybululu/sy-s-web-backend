@@ -834,27 +834,33 @@ async def rectify_snippet(
     if model_status.generator_loaded:
         logger.info(f"========== 整改生成开始 ==========")
         
-        # 构建 Prompt：action_tag 引导改写
-        # 格式3: 包含具体合规要求的 Prompt
-        # 根据违规类型给出具体的合规要求
+        # 获取法律依据（用于提取核心关键词注入 Prompt）
+        legal_keywords = get_legal_keywords(request.violation_type, context=f"{indicator_name} {request.original_snippet}")
+        legal_context = get_legal_basis_from_rag(request.violation_type, context=f"{indicator_name} {request.original_snippet}")
+        
+        # 合规要求映射（具体动作指示）
         COMPLIANCE_REQUIREMENTS = {
-            "I1": "遵循最小必要原则，只收集与服务相关的个人信息",
-            "I2": "明确说明收集个人信息的目的",
-            "I3": "说明合法性依据并取得用户同意",
-            "I4": "处理敏感个人信息需单独明示同意",
-            "I5": "向用户告知接收方并取得单独同意",
-            "I6": "处理敏感信息需单独授权",
+            "I1": "遵循最小必要原则",
+            "I2": "明确告知收集目的",
+            "I3": "说明合法性依据取得同意",
+            "I4": "敏感信息单独明示同意",
+            "I5": "告知接收方并取得单独同意",
+            "I6": "敏感信息单独授权",
             "I7": "明确个人信息保存期限",
             "I8": "遵循数据最小化原则",
-            "I9": "说明数据安全保护措施",
-            "I10": "明确用户各项权利及行使方式",
-            "I11": "提供便捷的投诉和举报渠道",
-            "I12": "承诺在规定时限内响应用户请求",
+            "I9": "说明安全保护措施",
+            "I10": "明确用户权利行使方式",
+            "I11": "提供便捷投诉渠道",
+            "I12": "规定响应时限",
         }
         requirement = COMPLIANCE_REQUIREMENTS.get(request.violation_type, "确保合规")
-        prompt = f"改写隐私政策条款，使其符合法律要求。法律要求：{requirement}。原文：{request.original_snippet[:80]}"
         
-        logger.info(f"Prompt: {prompt[:200]}...")
+        # Prompt 结构：rectify + [要求] + [依据] + 原文 + 改写建议：
+        # 从 RAG 结果提取核心内容（取前10字作为依据）
+        legal_basis_short = legal_keywords[:10] if legal_keywords else ""
+        prompt = f"rectify: [要求：{requirement}] [依据：{legal_basis_short}] 原文：{request.original_snippet[:60]} 改写建议："
+        
+        logger.info(f"Prompt: {prompt}")
         
         # Tokenize
         inputs = model_status.tokenizer_generator(
@@ -865,17 +871,17 @@ async def rectify_snippet(
         )
         logger.info(f"Input IDs shape: {inputs['input_ids'].shape}")
         
-        # 生成
+        # 生成 - 参数调整：防止复读，逼模型生成有意义内容
         with torch.no_grad():
             logger.info("开始调用 model.generate()...")
             output_ids = model_status.model_generator.generate(
                 input_ids=inputs["input_ids"],
                 attention_mask=inputs["attention_mask"],
-                max_new_tokens=150,
-                num_beams=8,
-                no_repeat_ngram_size=3,
-                repetition_penalty=2.5,
-                length_penalty=1.0,
+                max_new_tokens=64,           # 给整改建议留够空间
+                num_beams=10,                # 源码要求的 10
+                no_repeat_ngram_size=3,      # 禁止连续3字重复
+                repetition_penalty=2.5,      # 强行禁止复读原句
+                length_penalty=1.0,           # 鼓励生成完整句子
                 early_stopping=True,
                 num_return_sequences=1,
             )
