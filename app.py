@@ -796,14 +796,14 @@ async def rectify_snippet(
     if model_status.generator_loaded:
         logger.info(f"========== 整改生成开始 ==========")
         
-        # 构建 Prompt：保持 summarization 前缀（模型微调用），加入法律条款和改写指令
-        # 格式：summarization: 根据法律要求：{法律条款}，请将以下条款改写为合规表述：{违规条款}
+        # 构建 Prompt：简化版，只给法律原则（避免模型幻觉）
+        # 格式：summarization: {简化法律原则} 隐私政策：{违规条款}
         if legal_context:
-            # 简化法律条款，只取核心内容（到第一个句号或取前100字）
-            legal_summary = legal_context.split('。')[0] + '。' if '。' in legal_context else legal_context[:100]
-            prompt = f"summarization: 根据法律要求：{legal_summary}，请将以下条款改写为合规表述：{request.original_snippet[:120]}"
+            # 只提取关键词作为法律原则提示
+            legal_summary = legal_context.split('：')[0] if '：' in legal_context else legal_context[:30]
+            prompt = f"summarization: 隐私政策应遵循：{legal_summary}。原文：{request.original_snippet[:150]}"
         else:
-            prompt = f"summarization: 请将以下条款改写为合规表述：{request.original_snippet[:180]}"
+            prompt = f"summarization: 隐私政策：{request.original_snippet[:180]}"
         
         logger.info(f"Prompt: {prompt[:200]}...")
         
