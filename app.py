@@ -571,25 +571,26 @@ LEGAL_KEYWORDS = {
 
 
 def get_legal_keywords(violation_type: str, context: Optional[str] = None) -> str:
-    """从 RAG 检索结果中提取短关键词用于语义引导"""
-    # 优先使用静态关键词映射（确保可靠性）
-    keyword = LEGAL_KEYWORDS.get(violation_type, "合法合规")
+    """从 RAG 检索结果中提取法律关键词"""
+    # 如果 RAG 不可用，使用静态关键词
+    if not RAG_AVAILABLE or retriever is None:
+        return LEGAL_KEYWORDS.get(violation_type, "合法合规")
     
-    # 如果 RAG 可用，尝试从检索结果中提取更精准的关键词
-    if RAG_AVAILABLE and retriever is not None:
-        try:
-            results = retriever.retrieve_by_violation_type(violation_type, context=context, top_k=1)
-            if results and results[0].content:
-                content = results[0].content
-                # 提取第一句话的核心词（简化版）
-                first_sentence = content.split('。')[0] if '。' in content else content
-                # 截取前20字作为关键词
-                if len(first_sentence) > 10:
-                    keyword = first_sentence[:20]
-        except Exception:
-            pass
+    try:
+        results = retriever.retrieve_by_violation_type(violation_type, context=context, top_k=1)
+        if results:
+            result = results[0]
+            # 优先使用检索结果中的匹配关键词
+            if result.keywords_matched:
+                return " ".join(result.keywords_matched[:3])  # 取前3个关键词
+            # 否则使用条款标题
+            elif result.title:
+                return result.title[:15]
+    except Exception:
+        pass
     
-    return keyword
+    # 回退到静态关键词
+    return LEGAL_KEYWORDS.get(violation_type, "合法合规")
 
 
 def get_legal_basis_from_rag(violation_type: str, context: Optional[str] = None) -> str:
