@@ -530,10 +530,11 @@ def roberta_predict(sentence: str) -> List[float]:
         outputs = model_status.model_classifier(**inputs)
         logits = outputs.logits.squeeze()
         
-        # 调试：输出原始 logits（正负表示分类倾向）
+        # 调试：输出原始 logits
         logger.info(f"原始 logits: {logits.tolist()}")
         
-        probs = torch.sigmoid(logits).tolist()
+        # 【关键修复】使用 softmax（多分类问题），不是 sigmoid（二分类问题）
+        probs = torch.softmax(logits, dim=-1).tolist()
     
     if not isinstance(probs, list):
         probs = [probs]
