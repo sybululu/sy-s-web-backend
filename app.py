@@ -837,18 +837,18 @@ async def rectify_snippet(
     if model_status.generator_loaded:
         logger.info(f"========== 整改生成开始 ==========")
         
-        # 构建 Prompt：summarization + 法律关键词 + 原文
-        # 用关键词引导模型往合规方向改写
-        prompt = f"summarization: {legal_keywords} {request.original_snippet[:150]}"
+        # 构建 Prompt：明确"改写"任务，短关键词引导
+        # 格式：改写: 原句 -> 合规表述，关键词：XXX
+        prompt = f"改写: {request.original_snippet[:100]} -> 合规表述，关键词：{legal_keywords}"
         
         logger.info(f"Prompt: {prompt[:200]}...")
         
-        # Tokenize - 增加 max_length 以容纳法律条款内容
+        # Tokenize
         inputs = model_status.tokenizer_generator(
             prompt,
             return_tensors="pt",
             truncation=True,
-            max_length=512  # 增加长度以容纳法律条款
+            max_length=256
         )
         logger.info(f"Input IDs shape: {inputs['input_ids'].shape}")
         
@@ -858,28 +858,27 @@ async def rectify_snippet(
             output_ids = model_status.model_generator.generate(
                 input_ids=inputs["input_ids"],
                 attention_mask=inputs["attention_mask"],
-                max_new_tokens=200,            # 增加到200生成完整整改建议
+                max_new_tokens=150,
                 num_beams=8,
-                no_repeat_ngram_size=3,        # 防止3-gram重复
-                repetition_penalty=2.5,        # 惩罚复读
-                length_penalty=1.0,            # 中性长度惩罚
+                no_repeat_ngram_size=3,
+                repetition_penalty=2.5,
+                length_penalty=1.0,
                 early_stopping=True,
                 num_return_sequences=1,
             )
             logger.info(f"生成完成! output_ids shape: {output_ids.shape}")
         
-        # 4. 解码 - 【完全还原作者源码第187行】
+        # 解码
         tokenizer = model_status.tokenizer_generator
         logger.info(f"Tokenizer vocab_size: {len(tokenizer)}")
         
-        # 作者源码：直接 decode，不做任何过滤
         raw_result = tokenizer.decode(
             output_ids[0],
             skip_special_tokens=True,
             clean_up_tokenization_spaces=True
         )
         
-        # 作者源码第187行：去掉所有空格
+        # 去掉所有空格
         suggested_text = ''.join(raw_result.split())
         
         logger.info(f"原始解码结果: '{raw_result}'")
@@ -887,7 +886,6 @@ async def rectify_snippet(
         logger.info(f"========== 整改生成结束 ==========")
     else:
         # Fallback: 返回通用建议
-        indicator_name = ID_TO_INDICATOR.get(request.violation_type, "未知违规")
         suggested_text = f"建议修改条款内容，确保符合{indicator_name}的合规要求。"
     
     # 计算diff
