@@ -814,10 +814,6 @@ async def rectify_snippet(
                 num_return_sequences=1,
             )
             logger.info(f"生成完成! output_ids shape: {output_ids.shape}")
-                early_stopping=True,
-                num_return_sequences=1,
-            )
-            logger.info(f"生成完成! output_ids shape: {output_ids.shape}")
         
         # 4. 解码 - 【完全还原作者源码第187行】
         tokenizer = model_status.tokenizer_generator
