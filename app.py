@@ -280,14 +280,44 @@ def load_models():
             logger.error(f"分类模型 Fallback 也失败: {e2}")
     
     # ==========================================
-    # 生成模型加载 - mT5 small (中文支持好)
+    # 生成模型加载 - mT5 small + 浙大微调 checkpoint
     # ==========================================
     logger.info("-" * 30)
-    logger.info("步骤: 加载 mT5-Small 生成模型...")
+    logger.info("步骤: 加载 mT5-Small 生成模型 + checkpoint...")
     try:
-        # 加载 mT5 tokenizer 和模型
-        logger.info("加载 google/mt5-small 模型和 tokenizer...")
+        # 1. 下载浙大微调 checkpoint
+        from huggingface_hub import hf_hub_download
         
+        gen_ckpt_path = hf_hub_download(
+            repo_id=REPO_ID,
+            filename="rewrite_mT5_small.ckpt",
+            token=HF_TOKEN or None
+        )
+        logger.info(f"Checkpoint 已下载: {gen_ckpt_path}")
+        
+        # 加载 checkpoint
+        raw_ckpt = torch.load(gen_ckpt_path, map_location="cpu", weights_only=False)
+        
+        # 提取 state_dict
+        if isinstance(raw_ckpt, dict):
+            if "state_dict" in raw_ckpt:
+                state_dict = raw_ckpt["state_dict"]
+            elif "model_state_dict" in raw_ckpt:
+                state_dict = raw_ckpt["model_state_dict"]
+            else:
+                state_dict = raw_ckpt
+        else:
+            state_dict = raw_ckpt
+        
+        logger.info(f"Checkpoint 原始键名样本: {list(state_dict.keys())[:5]}")
+        
+        # 清理键名前缀
+        cleaned_state_dict = {}
+        for k, v in state_dict.items():
+            name = k.replace("model.", "")
+            cleaned_state_dict[name] = v
+        
+        # 2. 加载 mT5 tokenizer
         tokenizer = AutoTokenizer.from_pretrained("google/mt5-small")
         logger.info(f"Tokenizer vocab_size: {len(tokenizer)}")
         
@@ -297,9 +327,16 @@ def load_models():
         decoded = tokenizer.decode(test_ids)
         logger.info(f"Tokenizer 测试: '{test_text}' -> {test_ids} -> '{decoded}'")
         
-        # 加载模型
+        # 3. 加载 mT5 模型
         model = MT5ForConditionalGeneration.from_pretrained("google/mt5-small")
-        logger.info(f"模型加载成功，参数量: {sum(p.numel() for p in model.parameters()) / 1e6:.1f}M")
+        logger.info(f"mT5-base vocab_size: {model.config.vocab_size}")
+        
+        # 4. 加载微调权重
+        result = model.load_state_dict(cleaned_state_dict, strict=False)
+        logger.info(f"权重加载: 缺失={len(result.missing_keys)}, 多余={len(result.unexpected_keys)}")
+        
+        if len(result.missing_keys) > 10:
+            logger.error(f"权重加载失败！缺失 {len(result.missing_keys)} 个键")
         
         model.eval()
         model_status.model_generator = model
