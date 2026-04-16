@@ -52,15 +52,16 @@ VIOLATION_NAMES = {
 }
 
 
-def map_to_12_classes(probs: List[float]) -> List[str]:
+def map_to_12_classes(probs: List[float], confidence: float = None) -> List[str]:
     """
     11类 → 12类 直接映射
     
     Args:
         probs: 11类概率向量 [p0, p1, ..., p10]
+        confidence: 可选的置信度（logits差值），用于替代概率阈值
         
     Returns:
-        违规ID列表（返回概率最高的类别，阈值降低以适应模型输出分布）
+        违规ID列表（返回概率最高的类别）
     """
     if not probs:
         return []
@@ -69,12 +70,18 @@ def map_to_12_classes(probs: List[float]) -> List[str]:
     max_idx = probs.index(max(probs))
     max_prob = probs[max_idx]
     
-    # 阈值降低以适应模型输出分布（模型输出在 0.42-0.62 之间）
-    # 即使置信度不高，也返回概率最高的类别
-    THRESHOLD = 0.40  # 降低阈值以确保能检测到违规
-    
-    if max_prob < THRESHOLD:
-        return []
+    # 优先使用 confidence 阈值，如果没有则使用概率阈值
+    if confidence is not None:
+        # confidence 是 max(logits) - mean(logits)，通常在 1.5-4.0 之间
+        # 使用 1.8 作为阈值（略低于平均值）
+        THRESHOLD = 1.8
+        if confidence < THRESHOLD:
+            return []
+    else:
+        # 降级使用 softmax 概率（但这不太准确）
+        SOFTMAX_THRESHOLD = 0.40
+        if max_prob < SOFTMAX_THRESHOLD:
+            return []
     
     # 直接映射
     target = ID_MAPPING.get(max_idx)

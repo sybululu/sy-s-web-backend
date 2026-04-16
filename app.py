@@ -512,11 +512,11 @@ def split_into_sentences(text: str) -> List[str]:
     sentences = re.split(r'[。！？\n]+', text)
     return [s.strip() for s in sentences if len(s.strip()) > 10]  # 至少10字符才保留
 
-def roberta_predict(sentence: str) -> List[float]:
-    """使用 RoBERTa 分类模型预测"""
+def roberta_predict(sentence: str) -> tuple:
+    """使用 RoBERTa 分类模型预测，返回 (probs, confidence)"""
     if not model_status.classifier_loaded:
         logger.warning("分类模型未加载，返回默认概率")
-        return [0.0] * 11
+        return [0.0] * 11, 0.0
     
     inputs = model_status.tokenizer_classifier(
         sentence, 
@@ -529,21 +529,29 @@ def roberta_predict(sentence: str) -> List[float]:
     with torch.no_grad():
         outputs = model_status.model_classifier(**inputs)
         logits = outputs.logits.squeeze()
+        logits_list = logits.tolist()
         
-        # 调试：输出原始 logits
-        logger.info(f"原始 logits: {logits.tolist()}")
+        # 调试日志：输出原始 logits
+        logger.info(f"原始 logits: {logits_list}")
         
-        # 【关键修复】使用 softmax（多分类问题），不是 sigmoid（二分类问题）
-        probs = torch.softmax(logits, dim=-1).tolist()
-    
-    if not isinstance(probs, list):
-        probs = [probs]
+        # 【关键修复】使用 logits 差值代替 softmax
+        # softmax 是相对概率，当 logits 差距不够大时概率偏低
+        # 使用 max(logits) - mean(logits) 作为置信度，更直观
+        logits_tensor = logits if hasattr(logits, '__iter__') else logits.unsqueeze(0)
+        max_logit = torch.max(logits_tensor)
+        mean_logit = torch.mean(logits_tensor)
+        confidence = (max_logit - mean_logit).item()
+        
+        # 同时计算 softmax 概率（用于多标签检测）
+        probs = torch.softmax(logits_tensor, dim=-1).tolist()
+        if not isinstance(probs, list):
+            probs = [probs]
     
     # 调试日志：输出概率分布
     max_idx = probs.index(max(probs)) if probs else -1
-    logger.info(f"句子: {sentence[:30]}... | 最高类别: {max_idx}, 概率: {probs[max_idx] if max_idx >= 0 else 0:.4f}")
+    logger.info(f"句子: {sentence[:30]}... | 最高类别: {max_idx}, 置信度: {confidence:.4f}, softmax概率: {probs[max_idx] if max_idx >= 0 else 0:.4f}")
     
-    return probs
+    return probs, confidence
 
 def get_legal_basis_from_rag(violation_type: str, context: Optional[str] = None) -> str:
     """使用 RAG 检索获取法律依据"""
@@ -684,12 +692,11 @@ async def analyze(
     
     for idx, sentence in enumerate(sentences):
         # BERT-MoE 分类预测
-        probs = roberta_predict(sentence)
+        probs, confidence = roberta_predict(sentence)
         
         # 11类 → 12类 映射
-        THRESHOLD = 0.40
         if map_to_12_classes is not None:
-            violation_ids = map_to_12_classes(probs)
+            violation_ids = map_to_12_classes(probs, confidence=confidence)
         else:
             ID_MAPPING_FALLBACK = {
                 0: "I1", 1: "I2", 2: "I3", 3: "I4", 4: "I5",
@@ -699,7 +706,8 @@ async def analyze(
             if probs:
                 max_idx = probs.index(max(probs))
                 max_prob = probs[max_idx]
-                if max_prob >= THRESHOLD:
+                if confidence is not None and confidence >= 1.8:
+                    v_id = ID_MAPPING_FALLBACK.get(max_idx)
                     v_id = ID_MAPPING_FALLBACK.get(max_idx)
                     if v_id:
                         violation_ids = [v_id]
