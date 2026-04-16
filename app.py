@@ -856,8 +856,8 @@ async def rectify_snippet(
         requirement = COMPLIANCE_REQUIREMENTS.get(request.violation_type, "确保合规")
         
         # Prompt：保持 summarization: 微调暗号，内容加强暗示，末尾加"重写结果："人工起始符
-        # 格式：summarization: 任务：请根据[action_tag]的合规要求，对原文进行专业重写。原文：xxx。重写结果：
-        prompt = f"summarization: 任务：请根据[{legal_keywords}]的合规要求，对以下隐私条款进行专业重写。原文：{request.original_snippet[:50]}。重写结果："
+        # 注意：legal_keywords 不加书名号，避免模型重复
+        prompt = f"summarization: 任务：请按照{legal_keywords}的要求重写以下条款。原文：{request.original_snippet[:50]}。重写结果："
         
         logger.info(f"Prompt: {prompt}")
         
