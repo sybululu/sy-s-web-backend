@@ -564,14 +564,19 @@ def get_legal_basis_from_rag(violation_type: str, context: Optional[str] = None)
     
     try:
         results = retriever.retrieve_by_violation_type(violation_type, context=context, top_k=3)
+        logger.info(f"RAG检索 {violation_type}: 获得 {len(results)} 条结果")
+        
         if results:
             legal_refs = []
             for result in results[:2]:
+                logger.info(f"  -> {result.law} {result.article_number}")
                 ref = f"{result.law} {result.article_number}"
                 legal_refs.append(ref)
             return "；".join(legal_refs) if legal_refs else INDICATORS.get(
                 ID_TO_INDICATOR.get(violation_type, ""), {}
             ).get("legal_basis", "《个人信息保护法》")
+        else:
+            logger.warning(f"RAG检索 {violation_type} 返回空，使用fallback")
     except Exception as e:
         logger.error(f"RAG 检索失败: {e}")
     
