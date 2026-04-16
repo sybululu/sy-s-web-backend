@@ -22,7 +22,7 @@ from fastapi.responses import Response, JSONResponse
 from sqlalchemy.orm import Session
 
 import torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, MT5ForConditionalGeneration, AutoConfig, AutoModelForSeq2SeqLM  # FlanT5 用 AutoModelForSeq2SeqLM
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, MT5ForConditionalGeneration, AutoConfig
 from diff_match_patch import diff_match_patch
 
 from models import User, Project, get_db, init_db
@@ -280,15 +280,15 @@ def load_models():
             logger.error(f"分类模型 Fallback 也失败: {e2}")
     
     # ==========================================
-    # 生成模型加载 - FlanT5 Base (测试用)
+    # 生成模型加载 - mT5 small (中文支持好)
     # ==========================================
     logger.info("-" * 30)
-    logger.info("步骤: 加载 FlanT5-Base 生成模型...")
+    logger.info("步骤: 加载 mT5-Small 生成模型...")
     try:
-        # 加载 flan-t5-base (不需要 checkpoint，直接用预训练模型)
-        logger.info("加载 google/flan-t5-base 模型和 tokenizer...")
+        # 加载 mT5 tokenizer 和模型
+        logger.info("加载 google/mt5-small 模型和 tokenizer...")
         
-        tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-base")
+        tokenizer = AutoTokenizer.from_pretrained("google/mt5-small")
         logger.info(f"Tokenizer vocab_size: {len(tokenizer)}")
         
         # 测试 tokenizer
@@ -298,17 +298,17 @@ def load_models():
         logger.info(f"Tokenizer 测试: '{test_text}' -> {test_ids} -> '{decoded}'")
         
         # 加载模型
-        model = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-base")
+        model = MT5ForConditionalGeneration.from_pretrained("google/mt5-small")
         logger.info(f"模型加载成功，参数量: {sum(p.numel() for p in model.parameters()) / 1e6:.1f}M")
         
         model.eval()
         model_status.model_generator = model
         model_status.tokenizer_generator = tokenizer
         model_status.generator_loaded = True
-        logger.info("FlanT5 生成模型加载成功!")
+        logger.info("mT5 生成模型加载成功!")
         
     except Exception as e:
-        logger.error(f"FlanT5 模型加载失败: {e}")
+        logger.error(f"mT5 模型加载失败: {e}")
         import traceback
         traceback.print_exc()
     
@@ -819,17 +819,17 @@ async def rectify_snippet(
         )
         logger.info(f"Input IDs shape: {inputs['input_ids'].shape}")
         
-        # 生成 - FlanT5 参数（保守设置避免乱码）
+        # 生成 - mT5 参数（防止复读）
         with torch.no_grad():
             logger.info("开始调用 model.generate()...")
             output_ids = model_status.model_generator.generate(
                 input_ids=inputs["input_ids"],
                 attention_mask=inputs["attention_mask"],
-                max_new_tokens=100,           # 足够生成整改建议
-                num_beams=4,                  # FlanT5 不需要太高
-                no_repeat_ngram_size=2,        # 禁止连续2字重复
-                repetition_penalty=1.2,        # FlanT5 较稳定，设低一点
-                length_penalty=1.0,            # 中性长度
+                max_new_tokens=80,           
+                num_beams=4,                 
+                no_repeat_ngram_size=2,       
+                repetition_penalty=1.1,        
+                length_penalty=1.2,           
                 early_stopping=True,
                 num_return_sequences=1,
             )
