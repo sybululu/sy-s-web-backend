@@ -835,8 +835,8 @@ async def rectify_snippet(
         logger.info(f"========== 整改生成开始 ==========")
         
         # 构建 Prompt：action_tag 引导改写
-        # 格式：summarization: [合规要求:{action_tag}] 原句:{original_sentence}
-        prompt = f"summarization: [合规要求:{legal_keywords}] 原句:{request.original_snippet[:80]}"
+        # 格式2: 更直接的改写指令
+        prompt = f"将以下隐私政策改写为合规版本：{request.original_snippet[:80]}"
         
         logger.info(f"Prompt: {prompt[:200]}...")
         
