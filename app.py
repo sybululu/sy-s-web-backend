@@ -856,19 +856,21 @@ async def rectify_snippet(
         )
         logger.info(f"Input IDs shape: {inputs['input_ids'].shape}")
         
-        # 生成 - mT5 参数（惩罚复读，打破复制本能）
+        # 生成 - mT5 参数（极端惩罚，逼模型改写）
         with torch.no_grad():
             logger.info("开始调用 model.generate()...")
             output_ids = model_status.model_generator.generate(
                 input_ids=inputs["input_ids"],
                 attention_mask=inputs["attention_mask"],
-                max_new_tokens=80,           
-                num_beams=10,                # 源码要求，多分支搜索
-                no_repeat_ngram_size=3,      # 禁止连续3字重复
-                repetition_penalty=2.2,       # 惩罚复读，强制寻找非原句词汇
-                length_penalty=0.8,           # 轻微惩罚长句，逼模型删减废话
+                max_new_tokens=60,           
+                num_beams=8,                
+                no_repeat_ngram_size=2,      # 禁止连续2字重复
+                repetition_penalty=3.0,       # 极端惩罚复读
+                length_penalty=0.6,          # 更强惩罚长句
                 early_stopping=True,
                 num_return_sequences=1,
+                temperature=0.8,            # 降低随机性
+                top_k=50,                   # 限制采样范围
             )
             logger.info(f"生成完成! output_ids shape: {output_ids.shape}")
         
