@@ -22,7 +22,7 @@ from fastapi.responses import Response, JSONResponse
 from sqlalchemy.orm import Session
 
 import torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, MT5ForConditionalGeneration, AutoConfig,FlanT5ForConditionalGeneration  # FlanT5 用于测试
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, MT5ForConditionalGeneration, AutoConfig, AutoModelForSeq2SeqLM  # FlanT5 用 AutoModelForSeq2SeqLM
 from diff_match_patch import diff_match_patch
 
 from models import User, Project, get_db, init_db
@@ -298,7 +298,7 @@ def load_models():
         logger.info(f"Tokenizer 测试: '{test_text}' -> {test_ids} -> '{decoded}'")
         
         # 加载模型
-        model = FlanT5ForConditionalGeneration.from_pretrained("google/flan-t5-base")
+        model = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-base")
         logger.info(f"模型加载成功，参数量: {sum(p.numel() for p in model.parameters()) / 1e6:.1f}M")
         
         model.eval()
