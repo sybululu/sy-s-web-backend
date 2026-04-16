@@ -569,9 +569,9 @@ def get_legal_basis_from_rag(violation_type: str, context: Optional[str] = None)
         if results:
             legal_refs = []
             for result in results[:2]:
-                # 返回完整法律引用和条款内容
-                full_ref = f"{result.law} {result.article_number}：{result.content[:80]}..."
-                logger.info(f"  -> {full_ref}")
+                # 返回完整法律引用和条款内容（增加展示长度）
+                full_ref = f"{result.law} {result.article_number}：{result.content[:200]}"
+                logger.info(f"  -> {full_ref[:100]}...")
                 legal_refs.append(full_ref)
             return "；".join(legal_refs) if legal_refs else INDICATORS.get(
                 ID_TO_INDICATOR.get(violation_type, ""), {}
