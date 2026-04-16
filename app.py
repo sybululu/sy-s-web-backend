@@ -797,9 +797,8 @@ async def rectify_snippet(
         logger.info(f"========== 整改生成开始 ==========")
         
         # 【关键修复】精简Prompt，去除中文标签干扰
-        # 修改 Prompt：明确告诉模型"改写成简洁合规版本"
-        # 由于 mT5 微调任务是 summarization，所以让模型做简化改写
-        prompt = f"请将以下隐私政策改写得更简洁合规：{request.original_snippet[:200]}"
+        # 使用 rewrite 任务格式（浙大微调的是改写任务，不是摘要）
+        prompt = f"rewrite: {request.original_snippet[:200]}"
         
         logger.info(f"Prompt: {prompt[:200]}...")
         
