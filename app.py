@@ -758,31 +758,26 @@ async def rectify_snippet(
     # RAG 检索相关法律条款
     legal_context = get_legal_basis_from_rag(request.violation_type, context=request.original_snippet)
     
+    # 获取分类标签名称
+    indicator_name = ID_TO_INDICATOR.get(request.violation_type, "")
+    
     # 使用 mT5 生成整改建议
     if model_status.generator_loaded:
-        # ========== 严格还原作者源码 ==========
         logger.info(f"========== 整改生成开始 ==========")
         
-        # 1. 【关键修复】严格还原作者源码第69行训练格式（有冒号有空格）
-        # 1. 【关键】还原作者源码第69行训练格式（有冒号有空格，长度400）
-        prompt = f"summarization: {request.original_snippet[:400]}"
-        logger.info(f"Prompt: {prompt}")
+        # 【关键】构造"三合一"最强 Prompt：标签 + 法律依据 + 原句
+        # 给模型足够的上下文，逼它"整改"而不是"摘要"
+        full_context = ""
+        if indicator_name:
+            full_context += f"违规类型：{indicator_name}。 "
+        if legal_context:
+            full_context += f"法律依据：{legal_context}。 "
+        full_context += f"原文：{request.original_snippet[:350]}"
         
-        # ========== 调试：测试 tokenizer 分词 ==========
-        logger.info("========== Tokenizer 调试开始 ==========")
-        test_text = request.original_snippet[:100]
-        test_tokens = model_status.tokenizer_generator.tokenize(test_text)
-        logger.info(f"原始文本: {test_text}")
-        logger.info(f"分词结果 ({len(test_tokens)} tokens): {test_tokens[:50]}")
-        test_ids = model_status.tokenizer_generator(test_text, return_tensors="pt")
-        logger.info(f"编码 shape: {test_ids['input_ids'].shape}")
-        logger.info(f"编码 IDs: {test_ids['input_ids'][0].tolist()[:20]}")
-        logger.info(f"解码验证: {model_status.tokenizer_generator.decode(test_ids['input_ids'][0], skip_special_tokens=True)}")
-        logger.info(f"Tokenizer vocab_size: {len(model_status.tokenizer_generator)}")
-        logger.info("========== Tokenizer 调试结束 ==========")
-        # ========== 调试结束 ==========
+        prompt = f"summarization: {full_context}"
+        logger.info(f"Prompt: {prompt[:200]}...")
         
-        # 2. Tokenize（严格还原作者源码）
+        # Tokenize
         inputs = model_status.tokenizer_generator(
             prompt,
             return_tensors="pt",
@@ -791,15 +786,16 @@ async def rectify_snippet(
         )
         logger.info(f"Input IDs shape: {inputs['input_ids'].shape}")
         
-        # 3. 生成 - 【完全还原作者源码第176-183行】
+        # 生成 - 加入 repetition_penalty 防止原样复读
         with torch.no_grad():
             logger.info("开始调用 model.generate()...")
             output_ids = model_status.model_generator.generate(
                 input_ids=inputs["input_ids"],
                 attention_mask=inputs["attention_mask"],
-                max_length=250,               # 作者源码原值
-                num_beams=10,                # 作者源码原值
-                no_repeat_ngram_size=2,      # 作者源码原值
+                max_length=250,
+                num_beams=10,
+                no_repeat_ngram_size=2,
+                repetition_penalty=1.5,           # 防止原样复读
                 early_stopping=True,
                 num_return_sequences=1,
             )
