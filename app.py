@@ -855,10 +855,9 @@ async def rectify_snippet(
         }
         requirement = COMPLIANCE_REQUIREMENTS.get(request.violation_type, "确保合规")
         
-        # Prompt 结构：rectify + [要求] + [依据] + 原文 + 改写建议：
-        # 从 RAG 结果提取核心内容（取前10字作为依据）
-        legal_basis_short = legal_keywords[:10] if legal_keywords else ""
-        prompt = f"rectify: [要求：{requirement}] [依据：{legal_basis_short}] 原文：{request.original_snippet[:60]} 改写建议："
+        # Prompt：保持 summarization: 微调暗号，内容加强暗示，末尾加"重写结果："人工起始符
+        # 格式：summarization: 任务：请根据[action_tag]的合规要求，对原文进行专业重写。原文：xxx。重写结果：
+        prompt = f"summarization: 任务：请根据[{legal_keywords}]的合规要求，对以下隐私条款进行专业重写。原文：{request.original_snippet[:50]}。重写结果："
         
         logger.info(f"Prompt: {prompt}")
         
@@ -871,16 +870,16 @@ async def rectify_snippet(
         )
         logger.info(f"Input IDs shape: {inputs['input_ids'].shape}")
         
-        # 生成 - 参数调整：防止复读，逼模型生成有意义内容
+        # 生成 - repetition_penalty=2.0 惩罚复读，逼模型用法律依据里的词
         with torch.no_grad():
             logger.info("开始调用 model.generate()...")
             output_ids = model_status.model_generator.generate(
                 input_ids=inputs["input_ids"],
                 attention_mask=inputs["attention_mask"],
-                max_new_tokens=64,           # 给整改建议留够空间
+                max_new_tokens=80,           # 给整改建议留够空间
                 num_beams=10,                # 源码要求的 10
                 no_repeat_ngram_size=3,      # 禁止连续3字重复
-                repetition_penalty=2.5,      # 强行禁止复读原句
+                repetition_penalty=2.0,       # 惩罚复读原句
                 length_penalty=1.0,           # 鼓励生成完整句子
                 early_stopping=True,
                 num_return_sequences=1,
