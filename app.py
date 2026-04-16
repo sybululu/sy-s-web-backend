@@ -554,7 +554,7 @@ def roberta_predict(sentence: str) -> tuple:
     return probs, confidence
 
 def get_legal_basis_from_rag(violation_type: str, context: Optional[str] = None) -> str:
-    """使用 RAG 检索获取法律依据"""
+    """使用 RAG 检索获取法律依据（包含完整条款内容）"""
     if not RAG_AVAILABLE or retriever is None:
         # 回退到静态配置
         for name, info in INDICATORS.items():
@@ -563,15 +563,16 @@ def get_legal_basis_from_rag(violation_type: str, context: Optional[str] = None)
         return "《个人信息保护法》"
     
     try:
-        results = retriever.retrieve_by_violation_type(violation_type, context=context, top_k=3)
+        results = retriever.retrieve_by_violation_type(violation_type, context=context, top_k=2)
         logger.info(f"RAG检索 {violation_type}: 获得 {len(results)} 条结果")
         
         if results:
             legal_refs = []
             for result in results[:2]:
-                logger.info(f"  -> {result.law} {result.article_number}")
-                ref = f"{result.law} {result.article_number}"
-                legal_refs.append(ref)
+                # 返回完整法律引用和条款内容
+                full_ref = f"{result.law} {result.article_number}：{result.content[:80]}..."
+                logger.info(f"  -> {full_ref}")
+                legal_refs.append(full_ref)
             return "；".join(legal_refs) if legal_refs else INDICATORS.get(
                 ID_TO_INDICATOR.get(violation_type, ""), {}
             ).get("legal_basis", "《个人信息保护法》")
@@ -796,33 +797,35 @@ async def rectify_snippet(
         logger.info(f"========== 整改生成开始 ==========")
         
         # 【关键修复】精简Prompt，去除中文标签干扰
-        # 只给核心信息：原文 + 法律依据（不用标签引导，让模型自己判断）
-        prompt = f"summarization: {request.original_snippet[:300]}"
+        # 优化 Prompt：原文 + 法律依据，给模型更多上下文
+        # 格式：summarization: {违规条款} 法律要求：{相关法律条款}
+        prompt = f"summarization: {request.original_snippet[:200]}"
         if legal_context:
-            prompt += f" {legal_context[:100]}"  # 只加法律依据，不加标签
+            # 法律条款内容可能较长，截取前150字符确保不超长
+            prompt += f" 法律要求：{legal_context[:150]}"
         
-        logger.info(f"Prompt: {prompt[:150]}...")
+        logger.info(f"Prompt: {prompt[:200]}...")
         
-        # Tokenize
+        # Tokenize - 增加 max_length 以容纳法律条款内容
         inputs = model_status.tokenizer_generator(
             prompt,
             return_tensors="pt",
             truncation=True,
-            max_length=400
+            max_length=512  # 增加长度以容纳法律条款
         )
         logger.info(f"Input IDs shape: {inputs['input_ids'].shape}")
         
-        # 生成 - 【暴力破解复读】大幅提高 repetition_penalty
+        # 生成
         with torch.no_grad():
             logger.info("开始调用 model.generate()...")
             output_ids = model_status.model_generator.generate(
                 input_ids=inputs["input_ids"],
                 attention_mask=inputs["attention_mask"],
-                max_new_tokens=100,            # 限制生成长度
+                max_new_tokens=150,            # 增加生成长度以生成完整整改建议
                 num_beams=10,
                 no_repeat_ngram_size=3,        # 防止3-gram重复
-                repetition_penalty=3.0,        # 【关键】大幅惩罚复读
-                length_penalty=0.6,            # 惩罚过长输出
+                repetition_penalty=3.0,        # 惩罚复读
+                length_penalty=0.6,           # 惩罚过长输出
                 early_stopping=True,
                 num_return_sequences=1,
             )
