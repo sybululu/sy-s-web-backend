@@ -70,17 +70,12 @@ def map_to_12_classes(probs: List[float], confidence: float = None) -> List[str]
     max_idx = probs.index(max(probs))
     max_prob = probs[max_idx]
     
-    # 优先使用 confidence 阈值，如果没有则使用概率阈值
+    # 使用 confidence 和概率双重限制
     if confidence is not None:
-        # confidence 是 max(logits) - mean(logits)，通常在 1.5-4.0 之间
-        # 使用 1.8 作为阈值（略低于平均值）
-        THRESHOLD = 1.8
-        if confidence < THRESHOLD:
-            return []
-    else:
-        # 降级使用 softmax 概率（但这不太准确）
-        SOFTMAX_THRESHOLD = 0.40
-        if max_prob < SOFTMAX_THRESHOLD:
+        # confidence 是 max(logits) - mean(logits)
+        CONFIDENCE_THRESHOLD = 3.0
+        PROB_THRESHOLD = 0.6
+        if confidence < CONFIDENCE_THRESHOLD or max_prob < PROB_THRESHOLD:
             return []
     
     # 直接映射
