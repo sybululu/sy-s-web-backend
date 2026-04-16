@@ -571,7 +571,7 @@ LEGAL_KEYWORDS = {
 
 
 def get_legal_keywords(violation_type: str, context: Optional[str] = None) -> str:
-    """从 RAG 检索结果中提取法律关键词"""
+    """从 RAG 检索结果中提取法律 action_tag（核心合规动作）"""
     # 如果 RAG 不可用，使用静态关键词
     if not RAG_AVAILABLE or retriever is None:
         return LEGAL_KEYWORDS.get(violation_type, "合法合规")
@@ -580,12 +580,9 @@ def get_legal_keywords(violation_type: str, context: Optional[str] = None) -> st
         results = retriever.retrieve_by_violation_type(violation_type, context=context, top_k=1)
         if results:
             result = results[0]
-            # 优先使用检索结果中的匹配关键词
+            # 优先取 keywords_matched[0] 作为 action_tag（最精炼的合规动作词）
             if result.keywords_matched:
-                return " ".join(result.keywords_matched[:3])  # 取前3个关键词
-            # 否则使用条款标题
-            elif result.title:
-                return result.title[:15]
+                return result.keywords_matched[0]
     except Exception:
         pass
     
@@ -837,9 +834,9 @@ async def rectify_snippet(
     if model_status.generator_loaded:
         logger.info(f"========== 整改生成开始 ==========")
         
-        # 构建 Prompt：明确"改写"任务，短关键词引导
-        # 格式：改写: 原句 -> 合规表述，关键词：XXX
-        prompt = f"改写: {request.original_snippet[:100]} -> 合规表述，关键词：{legal_keywords}"
+        # 构建 Prompt：action_tag 引导改写
+        # 格式：summarization: [合规要求:{action_tag}] 原句:{original_sentence}
+        prompt = f"summarization: [合规要求:{legal_keywords}] 原句:{request.original_snippet[:80]}"
         
         logger.info(f"Prompt: {prompt[:200]}...")
         
