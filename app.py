@@ -774,27 +774,21 @@ async def rectify_snippet(
     current_user: User = Depends(get_current_user)
 ):
     """生成违规条款的整改建议"""
-    # RAG 检索相关法律条款
-    legal_context = get_legal_basis_from_rag(request.violation_type, context=request.original_snippet)
-    
-    # 获取分类标签名称
+    # 【修复】RAG检索时加入分类标签，引导检索方向
     indicator_name = ID_TO_INDICATOR.get(request.violation_type, "")
+    legal_context = get_legal_basis_from_rag(request.violation_type, context=f"{indicator_name} {request.original_snippet}")
     
     # 使用 mT5 生成整改建议
     if model_status.generator_loaded:
         logger.info(f"========== 整改生成开始 ==========")
         
-        # 【关键】构造"三合一"最强 Prompt：标签 + 法律依据 + 原句 + 触发词
-        # 给模型足够的上下文，逼它"整改"而不是"摘要"
-        full_context = ""
-        if indicator_name:
-            full_context += f"违规类型：{indicator_name}。 "
+        # 【关键修复】精简Prompt，去除中文标签干扰
+        # 只给核心信息：原文 + 法律依据（不用标签引导，让模型自己判断）
+        prompt = f"summarization: {request.original_snippet[:300]}"
         if legal_context:
-            full_context += f"法律依据：{legal_context}。 "
-        full_context += f"原文：{request.original_snippet[:300]} 修改建议："
+            prompt += f" {legal_context[:100]}"  # 只加法律依据，不加标签
         
-        prompt = f"summarization: {full_context}"
-        logger.info(f"Prompt: {prompt[:200]}...")
+        logger.info(f"Prompt: {prompt[:150]}...")
         
         # Tokenize
         inputs = model_status.tokenizer_generator(
@@ -805,17 +799,29 @@ async def rectify_snippet(
         )
         logger.info(f"Input IDs shape: {inputs['input_ids'].shape}")
         
-        # 生成 - 【暴力破解复读】加大 repetition_penalty
+        # 生成 - 加大 repetition_penalty 防止复读
+        with torch.no_grad():
+        
+        # Tokenize
+        inputs = model_status.tokenizer_generator(
+            prompt,
+            return_tensors="pt",
+            truncation=True,
+            max_length=400
+        )
+        logger.info(f"Input IDs shape: {inputs['input_ids'].shape}")
+        
+        # 生成 - 【暴力破解复读】大幅提高 repetition_penalty
         with torch.no_grad():
             logger.info("开始调用 model.generate()...")
             output_ids = model_status.model_generator.generate(
                 input_ids=inputs["input_ids"],
                 attention_mask=inputs["attention_mask"],
-                max_new_tokens=128,
+                max_new_tokens=100,            # 限制生成长度
                 num_beams=10,
-                no_repeat_ngram_size=2,
-                repetition_penalty=2.5,           # 【关键】暴力惩罚复读
-                length_penalty=0.8,               # 惩罚过长输出
+                no_repeat_ngram_size=3,        # 防止3-gram重复
+                repetition_penalty=3.0,         # 【关键】大幅惩罚复读
+                length_penalty=0.6,             # 惩罚过长输出
                 early_stopping=True,
                 num_return_sequences=1,
             )
