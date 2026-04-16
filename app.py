@@ -811,39 +811,35 @@ async def rectify_snippet(
     current_user: User = Depends(get_current_user)
 ):
     """生成违规条款的整改建议"""
-    # 获取法律关键词和完整依据
+    # 获取指标名称
     indicator_name = ID_TO_INDICATOR.get(request.violation_type, "")
-    legal_keywords = get_legal_keywords(request.violation_type, context=f"{indicator_name} {request.original_snippet}")
-    legal_context = get_legal_basis_from_rag(request.violation_type, context=f"{indicator_name} {request.original_snippet}")
     
     # 使用 mT5 生成整改建议
     if model_status.generator_loaded:
         logger.info(f"========== 整改生成开始 ==========")
         
-        # 获取法律依据（用于提取核心关键词注入 Prompt）
-        legal_keywords = get_legal_keywords(request.violation_type, context=f"{indicator_name} {request.original_snippet}")
+        # 获取 RAG 法律依据（用于展示，不塞入 Prompt）
         legal_context = get_legal_basis_from_rag(request.violation_type, context=f"{indicator_name} {request.original_snippet}")
         
-        # 合规要求映射（具体动作指示）
-        COMPLIANCE_REQUIREMENTS = {
-            "I1": "遵循最小必要原则",
-            "I2": "明确告知收集目的",
-            "I3": "说明合法性依据取得同意",
-            "I4": "敏感信息单独明示同意",
-            "I5": "告知接收方并取得单独同意",
-            "I6": "敏感信息单独授权",
-            "I7": "明确个人信息保存期限",
-            "I8": "遵循数据最小化原则",
-            "I9": "说明安全保护措施",
-            "I10": "明确用户权利行使方式",
-            "I11": "提供便捷投诉渠道",
-            "I12": "规定响应时限",
+        # 固定 4 字整改口诀（手动配置，最可靠）
+        RECTIFY_TAGS = {
+            "I1": "最小收集",     # 过度收集 → 最小必要
+            "I2": "告知目的",     # 未说明目的 → 明确告知
+            "I3": "取得同意",     # 未获同意 → 取得同意
+            "I4": "单独同意",     # 敏感信息 → 单独同意
+            "I5": "告知共享",     # 第三方共享 → 告知并同意
+            "I6": "单独授权",     # 敏感授权 → 单独授权
+            "I7": "明确期限",     # 未定期限 → 明确期限
+            "I8": "数据最小",     # 超范围收集 → 数据最小化
+            "I9": "安全措施",     # 未说明安全 → 说明措施
+            "I10": "保障权利",    # 未保障权利 → 明确权利
+            "I11": "便捷投诉",    # 无投诉渠道 → 提供渠道
+            "I12": "及时响应",    # 未响应时限 → 及时响应
         }
-        requirement = COMPLIANCE_REQUIREMENTS.get(request.violation_type, "确保合规")
+        tag = RECTIFY_TAGS.get(request.violation_type, "合规改写")
         
-        # Prompt：用"翻译"替代"重写"，激活模型不同电路
-        # 格式：summarization: 法律要求: XXX。原文: XXX。请将其翻译为合规描述：
-        prompt = f"summarization: 法律要求: {legal_keywords}。原文: {request.original_snippet[:50]}。请将其翻译为通俗易懂的合规描述："
+        # Prompt：保持 summarization: 暗号 + 4字口诀引导
+        prompt = f"summarization: [{tag}] {request.original_snippet[:60]}"
         
         logger.info(f"Prompt: {prompt}")
         
