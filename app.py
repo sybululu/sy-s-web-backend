@@ -22,7 +22,7 @@ from fastapi.responses import Response, JSONResponse
 from sqlalchemy.orm import Session
 
 import torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, MT5ForConditionalGeneration, AutoConfig
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, MT5ForConditionalGeneration, AutoConfig,FlanT5ForConditionalGeneration  # FlanT5 用于测试
 from diff_match_patch import diff_match_patch
 
 from models import User, Project, get_db, init_db
@@ -279,87 +279,36 @@ def load_models():
         except Exception as e2:
             logger.error(f"分类模型 Fallback 也失败: {e2}")
     
-    # 3. 加载生成模型 (mT5 small) - 从你的HF仓库加载
+    # ==========================================
+    # 生成模型加载 - FlanT5 Base (测试用)
+    # ==========================================
     logger.info("-" * 30)
-    logger.info("步骤2/2: 加载生成模型...")
+    logger.info("步骤: 加载 FlanT5-Base 生成模型...")
     try:
-        from huggingface_hub import hf_hub_download
+        # 加载 flan-t5-base (不需要 checkpoint，直接用预训练模型)
+        logger.info("加载 google/flan-t5-base 模型和 tokenizer...")
         
-        # 下载 checkpoint
-        gen_ckpt_path = hf_hub_download(
-            repo_id=REPO_ID,
-            filename="rewrite_mT5_small.ckpt",
-            token=HF_TOKEN or None
-        )
-        logger.info(f"Checkpoint 已下载: {gen_ckpt_path}")
-        
-        # 加载 checkpoint (用标准torch方式)
-        logger.info("加载checkpoint...")
-        raw_ckpt = torch.load(gen_ckpt_path, map_location="cpu", weights_only=False)
-        
-        # 提取 state_dict
-        if isinstance(raw_ckpt, dict):
-            if "state_dict" in raw_ckpt:
-                state_dict = raw_ckpt["state_dict"]
-            elif "model_state_dict" in raw_ckpt:
-                state_dict = raw_ckpt["model_state_dict"]
-            else:
-                state_dict = raw_ckpt
-        else:
-            state_dict = raw_ckpt
-        
-        logger.info(f"原始权重数量: {len(state_dict) if isinstance(state_dict, dict) else 'N/A'}")
-        
-        # 打印原始键名样本
-        logger.info(f"原始键名样本: {list(state_dict.keys())[:10]}")
-        
-        # 清理键名前缀：MT5ForConditionalGeneration 期望的键名是 shared.weight 而不是 model.shared.weight
-        logger.info("清理键名前缀...")
-        cleaned_state_dict = {}
-        for k, v in state_dict.items():
-            name = k.replace("model.", "")  # 去掉 model. 前缀
-            cleaned_state_dict[name] = v
-        
-        logger.info(f"清理后键名数量: {len(cleaned_state_dict)}")
-        logger.info(f"清理后键名样本: {list(cleaned_state_dict.keys())[:5]}")
-        
-        # 【关键修复】完全还原浙大训练方式
-        # 浙大源码第35-36行：直接加载 google/mt5-small 模型和 tokenizer
-        logger.info("加载 google/mt5-small 模型和 tokenizer...")
-        
-        # 使用 AutoTokenizer（新版本 transformers）
-        tokenizer = AutoTokenizer.from_pretrained("google/mt5-small")
+        tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-base")
         logger.info(f"Tokenizer vocab_size: {len(tokenizer)}")
-        logger.info(f"Tokenizer pad_token_id: {tokenizer.pad_token_id}")
-        logger.info(f"Tokenizer eos_token_id: {tokenizer.eos_token_id}")
         
-        # 【调试】测试 tokenizer 编解码
+        # 测试 tokenizer
         test_text = "共享"
         test_ids = tokenizer.encode(test_text)
         decoded = tokenizer.decode(test_ids)
         logger.info(f"Tokenizer 测试: '{test_text}' -> {test_ids} -> '{decoded}'")
         
-        # 直接加载 google/mt5-small 模型
-        model = MT5ForConditionalGeneration.from_pretrained("google/mt5-small")
-        base_config = model.config
-        logger.info(f"google/mt5-small config vocab_size: {base_config.vocab_size}")
-        
-        # 加载浙大微调的权重
-        logger.info("加载浙大微调权重...")
-        result = model.load_state_dict(cleaned_state_dict, strict=False)
-        logger.info(f"缺失: {len(result.missing_keys)}, 多余: {len(result.unexpected_keys)}")
-        
-        if len(result.missing_keys) > 10:
-            logger.error(f"权重加载严重失败！缺失 {len(result.missing_keys)} 个键")
+        # 加载模型
+        model = FlanT5ForConditionalGeneration.from_pretrained("google/flan-t5-base")
+        logger.info(f"模型加载成功，参数量: {sum(p.numel() for p in model.parameters()) / 1e6:.1f}M")
         
         model.eval()
         model_status.model_generator = model
-        model_status.tokenizer_generator = tokenizer  # 使用上面已加载的 tokenizer
+        model_status.tokenizer_generator = tokenizer
         model_status.generator_loaded = True
-        logger.info("生成模型加载成功!")
+        logger.info("FlanT5 生成模型加载成功!")
         
     except Exception as e:
-        logger.error(f"生成模型加载失败: {e}")
+        logger.error(f"FlanT5 模型加载失败: {e}")
         import traceback
         traceback.print_exc()
     
@@ -855,9 +804,9 @@ async def rectify_snippet(
         }
         requirement = COMPLIANCE_REQUIREMENTS.get(request.violation_type, "确保合规")
         
-        # Prompt：保持 summarization: 微调暗号，内容加强暗示，末尾加"重写结果："人工起始符
-        # 注意：legal_keywords 不加书名号，避免模型重复
-        prompt = f"summarization: 任务：请按照{legal_keywords}的要求重写以下条款。原文：{request.original_snippet[:50]}。重写结果："
+        # Prompt：FlanT5 友好格式，用自然语言指令
+        # 格式：question: ... context: ... answer:
+        prompt = f"问题：请将以下隐私政策条款改写为合规表述，要求：{requirement}。原文：{request.original_snippet[:60]}。答案："
         
         logger.info(f"Prompt: {prompt}")
         
@@ -870,17 +819,17 @@ async def rectify_snippet(
         )
         logger.info(f"Input IDs shape: {inputs['input_ids'].shape}")
         
-        # 生成 - repetition_penalty=2.0 惩罚复读，逼模型用法律依据里的词
+        # 生成 - FlanT5 参数（保守设置避免乱码）
         with torch.no_grad():
             logger.info("开始调用 model.generate()...")
             output_ids = model_status.model_generator.generate(
                 input_ids=inputs["input_ids"],
                 attention_mask=inputs["attention_mask"],
-                max_new_tokens=80,           # 给整改建议留够空间
-                num_beams=10,                # 源码要求的 10
-                no_repeat_ngram_size=3,      # 禁止连续3字重复
-                repetition_penalty=2.0,       # 惩罚复读原句
-                length_penalty=1.0,           # 鼓励生成完整句子
+                max_new_tokens=100,           # 足够生成整改建议
+                num_beams=4,                  # FlanT5 不需要太高
+                no_repeat_ngram_size=2,        # 禁止连续2字重复
+                repetition_penalty=1.2,        # FlanT5 较稳定，设低一点
+                length_penalty=1.0,            # 中性长度
                 early_stopping=True,
                 num_return_sequences=1,
             )
