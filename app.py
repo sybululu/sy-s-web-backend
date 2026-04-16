@@ -553,6 +553,45 @@ def roberta_predict(sentence: str) -> tuple:
     
     return probs, confidence
 
+# 违规类型对应的法律关键词（用于引导模型改写）
+LEGAL_KEYWORDS = {
+    "I1": "最小必要原则",
+    "I2": "明确告知目的",
+    "I3": "取得用户同意",
+    "I4": "敏感信息单独同意",
+    "I5": "第三方共享告知",
+    "I6": "单独授权",
+    "I7": "明确存储期限",
+    "I8": "合理范围收集",
+    "I9": "及时删除机制",
+    "I10": "用户权利保障",
+    "I11": "便捷投诉渠道",
+    "I12": "及时响应",
+}
+
+
+def get_legal_keywords(violation_type: str, context: Optional[str] = None) -> str:
+    """从 RAG 检索结果中提取短关键词用于语义引导"""
+    # 优先使用静态关键词映射（确保可靠性）
+    keyword = LEGAL_KEYWORDS.get(violation_type, "合法合规")
+    
+    # 如果 RAG 可用，尝试从检索结果中提取更精准的关键词
+    if RAG_AVAILABLE and retriever is not None:
+        try:
+            results = retriever.retrieve_by_violation_type(violation_type, context=context, top_k=1)
+            if results and results[0].content:
+                content = results[0].content
+                # 提取第一句话的核心词（简化版）
+                first_sentence = content.split('。')[0] if '。' in content else content
+                # 截取前20字作为关键词
+                if len(first_sentence) > 10:
+                    keyword = first_sentence[:20]
+        except Exception:
+            pass
+    
+    return keyword
+
+
 def get_legal_basis_from_rag(violation_type: str, context: Optional[str] = None) -> str:
     """使用 RAG 检索获取法律依据（包含完整条款内容）"""
     if not RAG_AVAILABLE or retriever is None:
@@ -788,17 +827,18 @@ async def rectify_snippet(
     current_user: User = Depends(get_current_user)
 ):
     """生成违规条款的整改建议"""
-    # RAG 获取法律依据（只展示给用户，不喂给模型）
+    # 获取法律关键词和完整依据
     indicator_name = ID_TO_INDICATOR.get(request.violation_type, "")
+    legal_keywords = get_legal_keywords(request.violation_type, context=f"{indicator_name} {request.original_snippet}")
     legal_context = get_legal_basis_from_rag(request.violation_type, context=f"{indicator_name} {request.original_snippet}")
     
     # 使用 mT5 生成整改建议
     if model_status.generator_loaded:
         logger.info(f"========== 整改生成开始 ==========")
         
-        # 构建 Prompt：只用 summarization 前缀 + 原文
-        # RAG 法律条款只展示给用户，不喂给模型
-        prompt = f"summarization: {request.original_snippet[:200]}"
+        # 构建 Prompt：summarization + 法律关键词 + 原文
+        # 用关键词引导模型往合规方向改写
+        prompt = f"summarization: {legal_keywords} {request.original_snippet[:150]}"
         
         logger.info(f"Prompt: {prompt[:200]}...")
         
