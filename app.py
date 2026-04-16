@@ -804,9 +804,9 @@ async def rectify_snippet(
         }
         requirement = COMPLIANCE_REQUIREMENTS.get(request.violation_type, "确保合规")
         
-        # Prompt：FlanT5 友好格式，用自然语言指令
-        # 格式：question: ... context: ... answer:
-        prompt = f"问题：请将以下隐私政策条款改写为合规表述，要求：{requirement}。原文：{request.original_snippet[:60]}。答案："
+        # Prompt：用"翻译"替代"重写"，激活模型不同电路
+        # 格式：summarization: 法律要求: XXX。原文: XXX。请将其翻译为合规描述：
+        prompt = f"summarization: 法律要求: {legal_keywords}。原文: {request.original_snippet[:50]}。请将其翻译为通俗易懂的合规描述："
         
         logger.info(f"Prompt: {prompt}")
         
@@ -819,17 +819,17 @@ async def rectify_snippet(
         )
         logger.info(f"Input IDs shape: {inputs['input_ids'].shape}")
         
-        # 生成 - mT5 参数（防止复读）
+        # 生成 - mT5 参数（惩罚复读，打破复制本能）
         with torch.no_grad():
             logger.info("开始调用 model.generate()...")
             output_ids = model_status.model_generator.generate(
                 input_ids=inputs["input_ids"],
                 attention_mask=inputs["attention_mask"],
                 max_new_tokens=80,           
-                num_beams=4,                 
-                no_repeat_ngram_size=2,       
-                repetition_penalty=1.1,        
-                length_penalty=1.2,           
+                num_beams=10,                # 源码要求，多分支搜索
+                no_repeat_ngram_size=3,      # 禁止连续3字重复
+                repetition_penalty=2.2,       # 惩罚复读，强制寻找非原句词汇
+                length_penalty=0.8,           # 轻微惩罚长句，逼模型删减废话
                 early_stopping=True,
                 num_return_sequences=1,
             )
