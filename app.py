@@ -799,18 +799,6 @@ async def rectify_snippet(
         )
         logger.info(f"Input IDs shape: {inputs['input_ids'].shape}")
         
-        # 生成 - 加大 repetition_penalty 防止复读
-        with torch.no_grad():
-        
-        # Tokenize
-        inputs = model_status.tokenizer_generator(
-            prompt,
-            return_tensors="pt",
-            truncation=True,
-            max_length=400
-        )
-        logger.info(f"Input IDs shape: {inputs['input_ids'].shape}")
-        
         # 生成 - 【暴力破解复读】大幅提高 repetition_penalty
         with torch.no_grad():
             logger.info("开始调用 model.generate()...")
@@ -820,8 +808,12 @@ async def rectify_snippet(
                 max_new_tokens=100,            # 限制生成长度
                 num_beams=10,
                 no_repeat_ngram_size=3,        # 防止3-gram重复
-                repetition_penalty=3.0,         # 【关键】大幅惩罚复读
-                length_penalty=0.6,             # 惩罚过长输出
+                repetition_penalty=3.0,        # 【关键】大幅惩罚复读
+                length_penalty=0.6,            # 惩罚过长输出
+                early_stopping=True,
+                num_return_sequences=1,
+            )
+            logger.info(f"生成完成! output_ids shape: {output_ids.shape}")
                 early_stopping=True,
                 num_return_sequences=1,
             )
