@@ -796,15 +796,14 @@ async def rectify_snippet(
     if model_status.generator_loaded:
         logger.info(f"========== 整改生成开始 ==========")
         
-        # 构建 Prompt：法律依据 + 违规条款
-        # 格式：summarization: {法律摘要}。原条款：{违规条款}
-        # 法律摘要只取前100字作为核心要求，避免幻觉
+        # 构建 Prompt：明确"改写"任务
+        # 格式：rewrite: {法律要求} 请将以下隐私政策改写为合规表述：{违规条款}
         if legal_context:
             # 简化法律条款，只取核心内容（到第一个句号或取前100字）
             legal_summary = legal_context.split('。')[0] + '。' if '。' in legal_context else legal_context[:100]
-            prompt = f"summarization: {legal_summary} 原条款：{request.original_snippet[:150]}"
+            prompt = f"根据法律要求：{legal_summary} 请将以下隐私政策改写为合规表述：{request.original_snippet[:150]}"
         else:
-            prompt = f"summarization: {request.original_snippet[:200]}"
+            prompt = f"请将以下隐私政策改写为合规表述：{request.original_snippet[:200]}"
         
         logger.info(f"Prompt: {prompt[:200]}...")
         
@@ -823,11 +822,11 @@ async def rectify_snippet(
             output_ids = model_status.model_generator.generate(
                 input_ids=inputs["input_ids"],
                 attention_mask=inputs["attention_mask"],
-                max_new_tokens=150,            # 增加生成长度以生成完整整改建议
-                num_beams=10,
+                max_new_tokens=200,            # 增加到200生成完整整改建议
+                num_beams=8,
                 no_repeat_ngram_size=3,        # 防止3-gram重复
-                repetition_penalty=3.0,        # 惩罚复读
-                length_penalty=0.6,           # 惩罚过长输出
+                repetition_penalty=2.5,        # 惩罚复读
+                length_penalty=1.0,            # 中性长度惩罚
                 early_stopping=True,
                 num_return_sequences=1,
             )
