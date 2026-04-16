@@ -29,57 +29,6 @@ from models import User, Project, get_db, init_db
 from auth import router as auth_router, get_current_user
 
 # ==========================================
-# 法律条文核心内容提取函数
-# ==========================================
-def get_legal_core(text: str, max_chars: int = 80) -> str:
-    """
-    从法律条文中提取核心内容（语义压缩策略）
-    寻找"应当"、"不得"、"必须"等核心动词，截取其后的关键义务语句
-    """
-    if not text:
-        return ""
-    
-    # 法律条文中的核心动词（引导核心义务的词）
-    core_signals = ["应当", "不得", "必须", "要求", "严禁", "可以", "有权"]
-    
-    # 寻找第一个出现的动词位置
-    start_idx = 0
-    for signal in core_signals:
-        pos = text.find(signal)
-        if pos != -1:
-            start_idx = pos
-            break
-    
-    # 从动词开始截取一定长度，保证语义连贯
-    core_content = text[start_idx:start_idx + max_chars]
-    
-    # 如果截断了，补上省略号
-    if len(text) > start_idx + max_chars:
-        core_content += "..."
-    
-    return core_content
-
-# ==========================================
-# mT5 安全解码函数
-# ==========================================
-_tokenizer_gen_vocab_size = None
-
-def safe_decode_mt5(tokenizer, token_ids, skip_special_tokens=True):
-    """安全解码 mT5 生成的 token ID，过滤超出 tokenizer 词汇表的 ID"""
-    global _tokenizer_gen_vocab_size
-    if _tokenizer_gen_vocab_size is None:
-        _tokenizer_gen_vocab_size = len(tokenizer)
-        logger.info(f"mT5 tokenizer vocab_size: {_tokenizer_gen_vocab_size}")
-    
-    # 过滤掉超出词汇表的 token ID
-    filtered_ids = [tid for tid in token_ids if tid < _tokenizer_gen_vocab_size]
-    
-    if not filtered_ids:
-        return ""
-    
-    return tokenizer.decode(filtered_ids, skip_special_tokens=skip_special_tokens)
-
-# ==========================================
 # 配置日志
 # ==========================================
 logging.basicConfig(
@@ -485,6 +434,7 @@ class AnalyzeResponse(BaseModel):
 class RectifyRequest(BaseModel):
     original_snippet: str = Field(..., min_length=5, description="违规条款原文", alias="original_snippet")
     violation_type: str = Field(..., description="违规类型ID，如 I1")
+    legal_basis: Optional[List[Dict[str, str]]] = Field(default=None, description="RAG检索的法律依据")
 
 class UrlRequest(BaseModel):
     url: str = Field(..., description="目标URL")
@@ -539,45 +489,9 @@ def roberta_predict(sentence: str) -> tuple:
     
     return probs, confidence
 
-# 违规类型对应的法律关键词（用于引导模型改写）
-LEGAL_KEYWORDS = {
-    "I1": "最小必要原则",
-    "I2": "明确告知目的",
-    "I3": "取得用户同意",
-    "I4": "敏感信息单独同意",
-    "I5": "第三方共享告知",
-    "I6": "单独授权",
-    "I7": "明确存储期限",
-    "I8": "合理范围收集",
-    "I9": "及时删除机制",
-    "I10": "用户权利保障",
-    "I11": "便捷投诉渠道",
-    "I12": "及时响应",
-}
-
-
-def get_legal_keywords(violation_type: str, context: Optional[str] = None) -> str:
-    """从 RAG 检索结果中提取法律 action_tag（核心合规动作）"""
-    # 如果 RAG 不可用，使用静态关键词
-    if not RAG_AVAILABLE or retriever is None:
-        return LEGAL_KEYWORDS.get(violation_type, "合法合规")
-    
-    try:
-        results = retriever.retrieve_by_violation_type(violation_type, context=context, top_k=1)
-        if results:
-            result = results[0]
-            # 优先取 keywords_matched[0] 作为 action_tag（最精炼的合规动作词）
-            if result.keywords_matched:
-                return result.keywords_matched[0]
-    except Exception:
-        pass
-    
-    # 回退到静态关键词
-    return LEGAL_KEYWORDS.get(violation_type, "合法合规")
-
 
 def get_legal_basis_from_rag(violation_type: str, context: Optional[str] = None) -> str:
-    """使用 RAG 检索获取法律依据（包含完整条款内容）"""
+    """使用 RAG 检索获取法律依据（包含完整条款内容，每条法律后换行）"""
     if not RAG_AVAILABLE or retriever is None:
         # 回退到静态配置
         for name, info in INDICATORS.items():
@@ -586,17 +500,18 @@ def get_legal_basis_from_rag(violation_type: str, context: Optional[str] = None)
         return "《个人信息保护法》"
     
     try:
-        results = retriever.retrieve_by_violation_type(violation_type, context=context, top_k=2)
+        results = retriever.retrieve_by_violation_type(violation_type, context=context, top_k=3)
         logger.info(f"RAG检索 {violation_type}: 获得 {len(results)} 条结果")
         
         if results:
             legal_refs = []
-            for result in results[:2]:
-                # 返回完整法律引用和条款内容（增加展示长度）
-                full_ref = f"{result.law} {result.article_number}：{result.content[:200]}"
+            for result in results[:3]:
+                # 返回完整法律引用和条款内容
+                full_ref = f"《{result.law}》{result.article_number}：{result.content[:300]}"
                 logger.info(f"  -> {full_ref[:100]}...")
                 legal_refs.append(full_ref)
-            return "；".join(legal_refs) if legal_refs else INDICATORS.get(
+            # 每条法律后换行
+            return "\n".join(legal_refs) if legal_refs else INDICATORS.get(
                 ID_TO_INDICATOR.get(violation_type, ""), {}
             ).get("legal_basis", "《个人信息保护法》")
         else:
@@ -608,22 +523,48 @@ def get_legal_basis_from_rag(violation_type: str, context: Optional[str] = None)
         "legal_basis", "《个人信息保护法》"
     )
 
+def get_violation_risk_level(violation_id: str) -> str:
+    """
+    根据违规类型的权重返回风险等级
+    
+    Args:
+        violation_id: 违规类型ID，如 "I1"
+        
+    Returns:
+        风险等级：high(高权重>=0.12) / medium(中等权重0.08-0.11) / low(低权重<0.08)
+    """
+    for ind_name, info in INDICATORS.items():
+        if info["id"] == violation_id:
+            weight = info["weight"]
+            if weight >= 0.12:
+                return "high"
+            elif weight >= 0.08:
+                return "medium"
+            else:
+                return "low"
+    return "medium"  # 默认中等风险
+
+
 def calculate_compliance_score(violation_ids: List[str]) -> tuple[float, str]:
     """
     计算合规评分
     
-    公式: S = 100 - Σ(wi × vi × 100)
+    公式: S = 100 - Σ(wi × 100)
+    每个违规类型只扣一次，不管出现多少次
     
     Args:
-        violation_ids: 违规类型ID列表
+        violation_ids: 违规类型ID列表（去重后）
         
     Returns:
         (总分, 风险等级)
     """
+    # 去重
+    unique_violations = set(violation_ids)
+    
     penalty = 0.0
     for ind_name, info in INDICATORS.items():
-        if info["id"] in violation_ids:
-            penalty += info["weight"] * 1.0  # vi=1 表示违规
+        if info["id"] in unique_violations:
+            penalty += info["weight"]  # 每种违规类型只扣一次
     
     total_score = round(max(0.0, 100.0 - (penalty * 100.0)), 1)
     
@@ -744,13 +685,21 @@ async def analyze(
         # 记录所有句子的分类结果
         max_idx = probs.index(max(probs)) if probs else 0
         max_prob = probs[max_idx] if probs else 0
+        
+        # 根据违规类型权重计算句子风险等级
+        sentence_risk_level = "low"  # 默认低风险
+        if violation_ids:
+            # 使用第一个违规类型的权重计算风险等级
+            sentence_risk_level = get_violation_risk_level(violation_ids[0])
+        
         all_snippets.append({
             "id": idx,
             "text": sentence,
             "predicted_class": max_idx,
             "predicted_class_name": ["数据收集", "权限获取", "共享转让", "使用", "存储方式", "安全措施", "特殊人群", "权限管理", "联系方式", "政策变更", "停止运营"][max_idx] if max_idx < 11 else "其他",
             "confidence": round(max_prob, 4),
-            "violation_ids": violation_ids
+            "violation_ids": violation_ids,
+            "risk_level": sentence_risk_level  # 基于权重的风险等级
         })
         
         for v_id in violation_ids:
@@ -763,6 +712,9 @@ async def analyze(
                 # RAG 获取法律依据
                 legal_basis = get_legal_basis_from_rag(v_id, context=sentence)
                 
+                # 基于权重的风险等级
+                risk_level = get_violation_risk_level(v_id)
+                
                 all_violation_ids[v_id].append({
                     "indicator": indicator_name,
                     "violation_name": indicator_name,
@@ -770,15 +722,17 @@ async def analyze(
                     "category_name": indicator_name,
                     "snippet": sentence,
                     "legal_basis": legal_basis,
-                    "confidence": round(max_prob, 4)
+                    "confidence": round(max_prob, 4),
+                    "risk_level": risk_level  # 基于权重的风险等级
                 })
     
     # 汇总所有违规（保留每个违规类型下的所有句子）
     for v_id, v_list in all_violation_ids.items():
         violations_list.extend(v_list)
     
-    # 计算合规评分（基于违规类型数量）
-    score, risk_level = calculate_compliance_score(list(all_violation_ids.keys()))
+    # 计算合规评分（每种违规类型只扣一次）
+    violation_ids_list = list(all_violation_ids.keys())
+    score, risk_level = calculate_compliance_score(violation_ids_list)
     
     # 生成项目
     project_id = f"p{int(datetime.utcnow().timestamp())}"
@@ -810,11 +764,8 @@ async def rectify_snippet(
     request: RectifyRequest,
     current_user: User = Depends(get_current_user)
 ):
-    """生成违规条款的整改建议"""
-    # 获取指标名称
-    indicator_name = ID_TO_INDICATOR.get(request.violation_type, "")
-    
-    # 使用 mT5 生成整改建议
+    """生成违规条款的整改建议（RAG 兜底方案）"""
+    # 使用 mT5 生成整改建议（简化版 Prompt）
     if model_status.generator_loaded:
         logger.info(f"========== 整改生成开始 ==========")
         
@@ -866,7 +817,10 @@ async def rectify_snippet(
         logger.info(f"========== 整改生成结束 ==========")
     else:
         # Fallback: 返回通用建议
-        suggested_text = f"建议修改条款内容，确保符合{indicator_name}的合规要求。"
+        suggested_text = f"建议修改条款内容，确保符合相关隐私法规的合规要求。"
+    
+    # 获取法律依据（优先使用请求中的，否则设为空）
+    legal_basis = request.legal_basis if request.legal_basis else []
     
     # 计算diff
     dmp = diff_match_patch()
@@ -890,7 +844,7 @@ async def rectify_snippet(
     
     return {
         "suggested_text": suggested_text,
-        "legal_basis": legal_context,
+        "legal_basis": legal_basis,
         "diff_original_html": diff_original_html,
         "diff_suggested_html": diff_suggested_html
     }
@@ -1029,10 +983,21 @@ async def get_project(
 @app.get("/api/v1/export/{project_id}")
 async def export_report(
     project_id: str,
-    current_user: User = Depends(get_current_user),
+    token: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """导出项目报告"""
+    # 尝试从 token 获取用户
+    current_user = None
+    if token:
+        try:
+            from auth import get_current_user_from_token
+            current_user = await get_current_user_from_token(token, db)
+        except Exception as e:
+            logger.warning(f"Token 验证失败: {e}")
+    
+    if not current_user:
+        raise HTTPException(status_code=401, detail="请先登录")
     project = db.query(Project).filter(
         Project.id == project_id,
         Project.user_id == current_user.id
