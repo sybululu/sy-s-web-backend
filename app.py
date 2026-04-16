@@ -818,28 +818,28 @@ async def rectify_snippet(
     if model_status.generator_loaded:
         logger.info(f"========== 整改生成开始 ==========")
         
-        # 获取 RAG 法律依据（用于展示，不塞入 Prompt）
+        # RAG 检索获取法条，手动映射为 action_tag
         legal_context = get_legal_basis_from_rag(request.violation_type, context=f"{indicator_name} {request.original_snippet}")
         
-        # 固定 4 字整改口诀（手动配置，最可靠）
-        RECTIFY_TAGS = {
-            "I1": "最小收集",     # 过度收集 → 最小必要
-            "I2": "告知目的",     # 未说明目的 → 明确告知
-            "I3": "取得同意",     # 未获同意 → 取得同意
-            "I4": "单独同意",     # 敏感信息 → 单独同意
-            "I5": "告知共享",     # 第三方共享 → 告知并同意
-            "I6": "单独授权",     # 敏感授权 → 单独授权
-            "I7": "明确期限",     # 未定期限 → 明确期限
-            "I8": "数据最小",     # 超范围收集 → 数据最小化
-            "I9": "安全措施",     # 未说明安全 → 说明措施
-            "I10": "保障权利",    # 未保障权利 → 明确权利
-            "I11": "便捷投诉",    # 无投诉渠道 → 提供渠道
-            "I12": "及时响应",    # 未响应时限 → 及时响应
+        # 手动映射 RAG 法条 → action_tag（翻译成模型能听懂的指令）
+        ACTION_TAGS = {
+            "I1": "最小必要收集",           # 过度收集 → 最小必要
+            "I2": "明确告知目的",            # 未说明目的 → 告知目的
+            "I3": "取得同意授权",            # 未获同意 → 取得同意
+            "I4": "单独明示同意",            # 敏感信息 → 单独同意
+            "I5": "告知共享目的并取得同意",   # 第三方共享 → 告知并同意
+            "I6": "单独授权处理",            # 敏感授权 → 单独授权
+            "I7": "明确保存期限",            # 未定期限 → 明确期限
+            "I8": "数据最小化",             # 超范围收集 → 数据最小化
+            "I9": "增加安全措施说明",        # 未说明安全 → 说明措施
+            "I10": "明确用户权利",           # 未保障权利 → 明确权利
+            "I11": "提供便捷投诉",           # 无投诉渠道 → 提供渠道
+            "I12": "规定响应时限",           # 未响应时限 → 及时响应
         }
-        tag = RECTIFY_TAGS.get(request.violation_type, "合规改写")
+        action_tag = ACTION_TAGS.get(request.violation_type, "合规改写")
         
-        # Prompt：保持 summarization: 暗号 + 4字口诀引导
-        prompt = f"summarization: [{tag}] {request.original_snippet[:60]}"
+        # Prompt：[微调指令] [RAG提取出的短动作] [原文] [人工起始符]
+        prompt = f"summarization: [合规改写方向：{action_tag}] 原文：{request.original_snippet[:50]}。重写为通俗合规的表述："
         
         logger.info(f"Prompt: {prompt}")
         
@@ -852,21 +852,19 @@ async def rectify_snippet(
         )
         logger.info(f"Input IDs shape: {inputs['input_ids'].shape}")
         
-        # 生成 - mT5 参数（极端惩罚，逼模型改写）
+        # 生成 - 暴力惩罚复读，强制寻找改写路径
         with torch.no_grad():
             logger.info("开始调用 model.generate()...")
             output_ids = model_status.model_generator.generate(
                 input_ids=inputs["input_ids"],
                 attention_mask=inputs["attention_mask"],
-                max_new_tokens=60,           
-                num_beams=8,                
-                no_repeat_ngram_size=2,      # 禁止连续2字重复
-                repetition_penalty=3.0,       # 极端惩罚复读
-                length_penalty=0.6,          # 更强惩罚长句
+                max_new_tokens=64,           
+                num_beams=10,               # 增加搜索深度
+                no_repeat_ngram_size=3,      # 限制连续重复
+                repetition_penalty=2.2,       # 暴力惩罚复读
+                length_penalty=0.8,           # 防止瞎编长句
                 early_stopping=True,
                 num_return_sequences=1,
-                temperature=0.8,            # 降低随机性
-                top_k=50,                   # 限制采样范围
             )
             logger.info(f"生成完成! output_ids shape: {output_ids.shape}")
         
