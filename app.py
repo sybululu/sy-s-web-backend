@@ -53,53 +53,16 @@ HF_REPO_ID = os.environ.get("HF_REPO_ID", "sybululu/bert-moe")
 USE_HF_API = os.environ.get("USE_HF_API", "0") == "1"
 HF_INFERENCE_MODEL = os.environ.get("HF_INFERENCE_MODEL", "microsoft/phi-4-mini-instruct")
 
-# 1. 加载 RoBERTa 风险分类模型
-# 强制保证至少有一个可用的分类模型
-tokenizer_roberta = None
-model_roberta = None
-
-# 首先尝试加载基础 tokenizer（必须）
-try:
-    tokenizer_roberta = AutoTokenizer.from_pretrained("hfl/chinese-roberta-wwm-ext")
-    print("✓ RoBERTa tokenizer 加载成功")
-except Exception as e:
-    logger.error(f"RoBERTa tokenizer 加载失败: {e}")
-
-# 尝试加载主模型 (sybululu/bert-moe)
-try:
-    model_roberta = AutoModelForSequenceClassification.from_pretrained(
-        HF_REPO_ID, 
-        num_labels=12,
-        token=HF_TOKEN or None,
-        ignore_mismatched_sizes=True
-    )
-    model_roberta.eval()
-    print(f"✓ 分类模型加载成功: {HF_REPO_ID}")
-except Exception as e:
-    logger.warning(f"无法从 {HF_REPO_ID} 加载分类模型: {e}")
-    # 降级到 hfl/chinese-roberta-wwm-ext
-    try:
-        model_roberta = AutoModelForSequenceClassification.from_pretrained(
-            "hfl/chinese-roberta-wwm-ext", 
-            num_labels=12
-        )
-        model_roberta.eval()
-        print("✓ 降级分类模型加载成功 (hfl/chinese-roberta-wwm-ext)")
-    except Exception as e2:
-        logger.error(f"降级模型加载也失败: {e2}")
-
-# 如果 tokenizer 加载失败但模型加载成功，重新尝试 tokenizer
-if tokenizer_roberta is None and model_roberta is not None:
-    try:
-        tokenizer_roberta = AutoTokenizer.from_pretrained("hfl/chinese-roberta-wwm-ext")
-    except Exception as e:
-        logger.error(f"Tokenizer 重新加载失败: {e}")
-
-# 最终检查
-if model_roberta is not None and tokenizer_roberta is not None:
-    print("✓ 分类模型就绪")
-else:
-    print("⚠️ 警告：分类模型未加载，API 将返回零结果")
+# 1. 加载 RoBERTa 风险分类模型 (sybululu/bert-moe)
+tokenizer_roberta = AutoTokenizer.from_pretrained("hfl/chinese-roberta-wwm-ext")
+model_roberta = AutoModelForSequenceClassification.from_pretrained(
+    HF_REPO_ID, 
+    num_labels=12,
+    token=HF_TOKEN or None,
+    ignore_mismatched_sizes=True
+)
+model_roberta.eval()
+print(f"✓ 分类模型加载成功: {HF_REPO_ID}")
 
 # mT5 降级模型 - 延迟加载，只有在 API 失败时才加载
 _model_mt5_cache = {"model": None, "tokenizer": None}
