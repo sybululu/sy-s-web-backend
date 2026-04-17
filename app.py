@@ -77,7 +77,7 @@ class BertClassifier(nn.Module):
 # 创建配置和模型
 class Config:
     hidden_size = 768
-    num_labels = 12  # 你的模型有 12 类违规
+    num_labels = 12  # 12 类违规
 
 config = Config()
 model_roberta = BertClassifier(config)
@@ -87,16 +87,32 @@ try:
     from huggingface_hub import hf_hub_download
     model_file = hf_hub_download(
         repo_id=HF_REPO_ID,
-        filename="pytorch_model.bin",  # 或你实际的权重文件名
+        filename="multi_classification_bertmoe.ckpt",
         token=HF_TOKEN or None
     )
-    state_dict = torch.load(model_file, map_location="cpu")
-    model_roberta.load_state_dict(state_dict, strict=False)
+    checkpoint = torch.load(model_file, map_location="cpu", weights_only=False)
+    
+    # 处理 checkpoint 结构
+    if "state_dict" in checkpoint:
+        state_dict = checkpoint["state_dict"]
+    elif "model_state_dict" in checkpoint:
+        state_dict = checkpoint["model_state_dict"]
+    else:
+        state_dict = checkpoint
+    
+    # 清理键名前缀 (model.xxx -> xxx)
+    cleaned_state_dict = {}
+    for k, v in state_dict.items():
+        new_key = k.replace("model.", "").replace("bert.", "")
+        cleaned_state_dict[new_key] = v
+    
+    model_roberta.load_state_dict(cleaned_state_dict, strict=False)
     print(f"✓ 分类模型加载成功: {HF_REPO_ID}")
 except Exception as e:
     raise RuntimeError(f"无法加载模型权重: {e}")
 
 model_roberta.eval()
+print("✓ 模型就绪")
 print("✓ 模型就绪")
 
 # mT5 降级模型 - 延迟加载，只有在 API 失败时才加载
