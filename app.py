@@ -42,61 +42,18 @@ except ImportError as e:
 # ==========================================
 # 模型加载 (HuggingFace Transformers)
 # ==========================================
-print("正在加载真实模型，这可能需要几分钟...")
+print("正在加载模型...")
 
 # HuggingFace Hub 配置
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
 HF_REPO_ID = os.environ.get("HF_REPO_ID", "sybululu/bert-moe")
 
-# GGUF 模型配置 (Phi-4 Mini)
-GGUF_MODEL_REPO = os.environ.get("GGUF_MODEL_REPO", "unsloth/phi-4-mini-instruct-GGUF")
-GGUF_MODEL_FILE = os.environ.get("GGUF_MODEL_FILE", "Phi-4-mini-instruct-Q6_K.gguf")
-GGUF_N_CTX = int(os.environ.get("GGUF_N_CTX", "2048"))
-GGUF_N_THREADS = int(os.environ.get("GGUF_N_THREADS", "2"))
+# HuggingFace Inference API 配置 (Phi-4 Mini)
+# 设置 USE_HF_API=1 启用 API 调用模式
+USE_HF_API = os.environ.get("USE_HF_API", "0") == "1"
+HF_INFERENCE_MODEL = os.environ.get("HF_INFERENCE_MODEL", "microsoft/phi-4-mini-instruct")
 
-# Phi-4 Mini LLM 实例
-llm_phi = None
-
-# 1. 加载 Phi-4 Mini GGUF 模型
-def load_phi_model():
-    """加载 Phi-4 Mini GGUF 模型"""
-    global llm_phi
-    
-    try:
-        from llama_cpp import Llama
-        
-        # 尝试从 HuggingFace Hub 下载
-        logger.info(f"正在从 HF Hub 下载 Phi-4 Mini GGUF 模型: {GGUF_MODEL_REPO}/{GGUF_MODEL_FILE}")
-        from huggingface_hub import hf_hub_download
-        
-        model_path = hf_hub_download(
-            repo_id=GGUF_MODEL_REPO,
-            filename=GGUF_MODEL_FILE,
-            token=HF_TOKEN or None,
-            local_dir="./models",
-            local_dir_use_symlinks=False  # 强制下载完整文件
-        )
-        
-        logger.info(f"模型下载完成: {model_path}")
-        llm_phi = Llama(
-            model_path=model_path,
-            n_ctx=GGUF_N_CTX,
-            n_threads=GGUF_N_THREADS,
-            verbose=False
-        )
-        print(f"✓ Phi-4 Mini GGUF 模型加载成功")
-        return True
-        
-    except ImportError:
-        logger.warning("llama-cpp-python 未安装，跳过 Phi-4 Mini")
-        print("⚠️ llama-cpp-python 未安装，将使用降级方案")
-    except Exception as e:
-        logger.warning(f"加载 Phi-4 Mini GGUF 模型失败: {e}")
-        print(f"⚠️ Phi-4 Mini 模型加载失败: {e}")
-    
-    return False
-
-# 2. 加载 RoBERTa 风险分类模型
+# 1. 加载 RoBERTa 风险分类模型
 try:
     tokenizer_roberta = AutoTokenizer.from_pretrained("hfl/chinese-roberta-wwm-ext")
     model_roberta = AutoModelForSequenceClassification.from_pretrained(
@@ -115,32 +72,23 @@ except Exception as e:
             num_labels=12
         )
         model_roberta.eval()
+        print("✓ 降级分类模型加载成功")
     except Exception as e2:
         logger.error(f"降级模型加载也失败: {e2}")
         model_roberta = None
 
-# mT5 作为降级方案（当 Phi-4 不可用时）
+# mT5 作为降级方案
 model_mt5 = None
 tokenizer_mt5 = None
 try:
-    if llm_phi is None:  # 只有在没有 Phi-4 时才加载 mT5
-        tokenizer_mt5 = AutoTokenizer.from_pretrained("google/mt5-base")
-        model_mt5 = MT5ForConditionalGeneration.from_pretrained("google/mt5-base")
-        model_mt5.eval()
-        print("✓ 降级 mT5 模型加载成功")
+    tokenizer_mt5 = AutoTokenizer.from_pretrained("google/mt5-base")
+    model_mt5 = MT5ForConditionalGeneration.from_pretrained("google/mt5-base")
+    model_mt5.eval()
+    print("✓ mT5 降级模型加载成功")
 except Exception as e:
-    logger.warning(f"mT5 降级模型加载失败: {e}")
+    logger.warning(f"mT5 模型加载失败: {e}")
 
 print("模型加载完成！")
-
-# 在后台异步加载 Phi-4 Mini（避免阻塞启动）
-import threading
-def load_model_async():
-    print("后台加载 Phi-4 Mini 模型中...")
-    load_phi_model()
-
-model_loader_thread = threading.Thread(target=load_model_async, daemon=True)
-model_loader_thread.start()
 
 # ==========================================
 # RAG 组件初始化
@@ -444,9 +392,9 @@ async def rectify_snippet(
     request: RectifyRequest,
     current_user: User = Depends(get_current_user)
 ):
-    """整改违规条款 - 使用 Phi-4 Mini 生成合规改写"""
+    """整改违规条款 - 使用 HuggingFace Inference API (Phi-4 Mini) 生成合规改写"""
     
-    # 获取违规类型提示
+    # 违规类型提示
     violation_type_hints = {
         "I1": "涉及收集个人信息，必须遵守最小必要原则，只能收集与服务直接相关的个人信息，禁止收集与服务无关的敏感信息。",
         "I2": "必须明确说明每项个人信息收集的具体目的和用途，不能使用模糊表述。",
@@ -472,45 +420,29 @@ async def rectify_snippet(
     
     suggested_text = ""
     
-    # 等待 Phi-4 Mini 模型加载完成（最多等待 60 秒）
-    if llm_phi is None and model_loader_thread.is_alive():
-        print("等待 Phi-4 Mini 模型加载...")
-        model_loader_thread.join(timeout=60)
-    
-    # 优先使用 Phi-4 Mini GGUF
-    if llm_phi is not None:
+    # 优先使用 HuggingFace Inference API
+    if USE_HF_API and HF_TOKEN:
         try:
-            # Phi-4 Mini Instruct 格式
-            prompt = f"""<|system|>
-你是一位资深的隐私合规专家。你需要根据提供的[法律依据]和[整改要求]，将[原句]重写为符合法律规范的表述。
-重写时必须：
-1. 遵循最小必要原则
-2. 明确说明处理目的
-3. 保障用户知情权和选择权
-4. 语言通俗易懂，避免法律术语堆砌
-<|user|>
-[法律依据摘要]：{legal_keywords}
-[整改要求]：{violation_hint}
-[原句]：{request.original_snippet}
-<|assistant|>
-<|text|>"""
+            from huggingface_hub import InferenceClient
             
-            response = llm_phi(
-                prompt,
+            client = InferenceClient(model=HF_INFERENCE_MODEL, token=HF_TOKEN)
+            
+            # Phi-4 Mini Instruct 格式
+            messages = [
+                {"role": "system", "content": "你是一位资深的隐私合规专家。你需要根据提供的[法律依据]和[整改要求]，将[原句]重写为符合法律规范的表述。重写时必须：\n1. 遵循最小必要原则\n2. 明确说明处理目的\n3. 保障用户知情权和选择权\n4. 语言通俗易懂，避免法律术语堆砌"},
+                {"role": "user", "content": f"[法律依据摘要]：{legal_keywords}\n[整改要求]：{violation_hint}\n[原句]：{request.original_snippet}"}
+            ]
+            
+            response = client.chat_completion(
+                messages=messages,
                 max_tokens=512,
-                stop=["<|endoftext|>", "</s>", "<|user|>"],
-                repeat_penalty=2.2,
                 temperature=0.7
             )
             
-            # 提取生成的文本
-            raw_output = response['choices'][0]['text'].strip()
-            # 清理输出，去除 <|text|> 等标签
-            suggested_text = clean_phi_output(raw_output)
-            
-            logger.info(f"Phi-4 Mini 生成成功: {request.violation_type}")
+            suggested_text = response.choices[0].message.content.strip()
+            logger.info(f"HF Inference API (Phi-4 Mini) 生成成功")
         except Exception as e:
-            logger.error(f"Phi-4 Mini 生成失败: {e}")
+            logger.error(f"HF Inference API 生成失败: {e}")
             suggested_text = ""
     
     # 降级方案：使用 mT5
@@ -574,17 +506,6 @@ def extract_legal_keywords(legal_context: str) -> str:
         result += "核心要求：" + "、".join(keywords[:4])
     
     return result or "遵循个人信息保护相关法律法规"
-
-
-def clean_phi_output(raw_output: str) -> str:
-    """清理 Phi-4 输出的特殊标签"""
-    import re
-    # 移除 <|text|>、<|thought|> 等标签
-    cleaned = re.sub(r'<\|[^|]+\|>', '', raw_output)
-    # 移除多余的空白
-    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
-    cleaned = cleaned.strip()
-    return cleaned if cleaned else ""
 
 
 def generate_rule_based_suggestion(original_text: str, violation_type: str, violation_hint: str) -> str:

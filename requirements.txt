@@ -33,7 +33,3 @@ python-dotenv>=1.0.0
 huggingface_hub>=0.19.0
 email-validator>=2.0.0
 diff-match-patch
-
-# GGUF Model Support (Phi-4 Mini)
-# HF Spaces 构建环境特殊处理
-llama-cpp-python==0.2.90
