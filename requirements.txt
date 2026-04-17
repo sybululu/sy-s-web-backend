@@ -35,5 +35,5 @@ email-validator>=2.0.0
 diff-match-patch
 
 # GGUF Model Support (Phi-4 Mini)
-# 使用预编译版本避免编译超时
-llama-cpp-python>=0.2.0 --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cp310
+# HF Spaces 构建环境特殊处理
+llama-cpp-python==0.2.90
