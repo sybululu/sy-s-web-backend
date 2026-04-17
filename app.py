@@ -50,7 +50,7 @@ HF_REPO_ID = os.environ.get("HF_REPO_ID", "sybululu/bert-moe")
 
 # GGUF 模型配置 (Phi-4 Mini)
 GGUF_MODEL_REPO = os.environ.get("GGUF_MODEL_REPO", "unsloth/phi-4-mini-instruct-GGUF")
-GGUF_MODEL_FILE = os.environ.get("GGUF_MODEL_FILE", "Phi-4-mini-instruct-Q4_K_M.gguf")
+GGUF_MODEL_FILE = os.environ.get("GGUF_MODEL_FILE", "Phi-4-mini-instruct-Q6_K.gguf")
 GGUF_N_CTX = int(os.environ.get("GGUF_N_CTX", "2048"))
 GGUF_N_THREADS = int(os.environ.get("GGUF_N_THREADS", "2"))
 
