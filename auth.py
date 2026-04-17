@@ -4,6 +4,8 @@
 用户注册、登录、JWT Token 管理
 """
 import os
+import hashlib
+import secrets
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -22,8 +24,6 @@ from models import User, get_db
 router = APIRouter(prefix="/api/v1/auth", tags=["认证"])
 
 # 安全生成密钥（优先使用独立环境变量，其次使用 HF Spaces 内置变量，最后随机生成）
-import secrets
-
 # 1. 优先使用独立的 SECRET_KEY 环境变量
 SECRET_KEY = os.environ.get("SECRET_KEY")
 
@@ -33,7 +33,6 @@ if not SECRET_KEY:
     hf_token = os.environ.get("HF_TOKEN", "")
     if hf_space_id:
         # 使用 SPACE_ID + TOKEN 组合生成确定性密钥
-        import hashlib
         combined = f"{hf_space_id}-{hf_token}"
         SECRET_KEY = hashlib.sha256(combined.encode()).hexdigest()
     elif hf_token:
