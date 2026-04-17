@@ -248,29 +248,13 @@ def split_into_sentences(text: str) -> List[str]:
     return [s.strip() for s in sentences if len(s.strip()) > 5]
 
 # 导入违规类型映射器 (11类 → 12类)
-from src.mapper import ID_MAPPING
-
-# 12类中文名称映射（用于 roberta_predict 输出）
-INDICATOR_NAMES = {
-    "I1": "过度收集敏感数据",
-    "I2": "未说明收集目的",
-    "I3": "未获得明示同意",
-    "I4": "收集范围超出服务需求",
-    "I5": "未明确第三方共享范围",
-    "I6": "未获得单独共享授权",
-    "I7": "未明确共享数据用途",
-    "I8": "未明确留存期限",
-    "I9": "未说明数据销毁机制",
-    "I10": "未明确用户权利范围",
-    "I11": "未提供便捷权利行使途径",
-    "I12": "未明确权利响应时限",
-}
+from src.mapper import ID_MAPPING, map_to_12_classes, VIOLATION_NAMES
 
 def roberta_predict(sentence: str) -> Dict[str, float]:
     """
     预测句子是否包含违规
     
-    模型输出 11 类，使用 ID_MAPPING 映射到 12 类指标
+    模型输出 11 类，使用 map_to_12_classes 映射到 12 类指标
     """
     if model_roberta is None or tokenizer_roberta is None:
         return {key: 0.0 for key in INDICATOR_KEYS}
@@ -289,15 +273,16 @@ def roberta_predict(sentence: str) -> Dict[str, float]:
     # 初始化所有 12 类为 0
     result = {key: 0.0 for key in INDICATOR_KEYS}
     
-    # 11类 → 12类 映射
-    for idx, prob in enumerate(probs):
-        if prob > 0.5:  # 阈值 0.5
-            indicator_id = ID_MAPPING.get(idx)
-            if indicator_id:
-                indicator_name = INDICATOR_NAMES.get(indicator_id)
-                if indicator_name and indicator_name in result:
-                    # 累加同类违规的概率（取最大值）
-                    result[indicator_name] = max(result[indicator_name], prob)
+    # 使用 map_to_12_classes 进行映射
+    violation_ids = map_to_12_classes(probs)
+    
+    # 将返回的 violation_id 列表映射到中文名称
+    for vid in violation_ids:
+        indicator_name = VIOLATION_NAMES.get(vid)
+        if indicator_name and indicator_name in result:
+            # 取该类别对应的概率值
+            max_idx = probs.index(max(probs))
+            result[indicator_name] = max(probs)
     
     return result
 
