@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field, validator
 from sqlalchemy.orm import Session
 
 import torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, MT5ForConditionalGeneration
+from transformers import BertTokenizer, BertModel, MT5ForConditionalGeneration
 
 from models import User, Project, get_db, init_db, Article, RetrievedChunk
 from auth import router as auth_router, get_current_user
@@ -54,49 +54,50 @@ USE_HF_API = os.environ.get("USE_HF_API", "0") == "1"
 HF_INFERENCE_MODEL = os.environ.get("HF_INFERENCE_MODEL", "microsoft/phi-4-mini-instruct")
 
 # 1. 加载 RoBERTa 风险分类模型 (sybululu/bert-moe)
-# 你的模型缺少 config.json，需要手动构建架构
-from transformers import BertConfig, BertForSequenceClassification
-from huggingface_hub import hf_hub_download
+# 你的模型是自定义架构，需要重建模型类后加载权重
+from transformers import BertModel, BertTokenizer
 import torch
+import torch.nn as nn
 
-tokenizer_roberta = AutoTokenizer.from_pretrained("hfl/chinese-roberta-wwm-ext")
+tokenizer_roberta = BertTokenizer.from_pretrained("hfl/chinese-roberta-wwm-ext")
 
-# 从基础模型获取配置
-base_config = BertConfig.from_pretrained("hfl/chinese-roberta-wwm-ext")
-base_config.num_labels = 12
+# 重建与训练代码一致的模型架构
+class BertClassifier(nn.Module):
+    def __init__(self, config):
+        super(BertClassifier, self).__init__()
+        self.bert = BertModel.from_pretrained("hfl/chinese-roberta-wwm-ext")
+        for param in self.bert.parameters():
+            param.requires_grad = True
+        self.fc = nn.Linear(config.hidden_size, config.num_labels)
+    
+    def forward(self, x, attention_mask=None):
+        _, pooled = self.bert(x, attention_mask=attention_mask)
+        return self.fc(pooled)
 
-# 手动创建模型架构
-model_roberta = BertForSequenceClassification(config=base_config)
+# 创建配置和模型
+class Config:
+    hidden_size = 768
+    num_labels = 12  # 你的模型有 12 类违规
 
-# 尝试加载权重文件
+config = Config()
+model_roberta = BertClassifier(config)
+
+# 加载预训练权重
 try:
-    # 先尝试 safetensors 格式
+    from huggingface_hub import hf_hub_download
     model_file = hf_hub_download(
         repo_id=HF_REPO_ID,
-        filename="model.safetensors",
+        filename="pytorch_model.bin",  # 或你实际的权重文件名
         token=HF_TOKEN or None
     )
-    from safetensors.torch import load_file
-    state_dict = load_file(model_file)
+    state_dict = torch.load(model_file, map_location="cpu")
     model_roberta.load_state_dict(state_dict, strict=False)
     print(f"✓ 分类模型加载成功: {HF_REPO_ID}")
 except Exception as e:
-    try:
-        # 降级到 PyTorch 格式
-        model_file = hf_hub_download(
-            repo_id=HF_REPO_ID,
-            filename="pytorch_model.bin",
-            token=HF_TOKEN or None
-        )
-        state_dict = torch.load(model_file, map_location="cpu")
-        if hasattr(state_dict, 'state_dict'):
-            state_dict = state_dict.state_dict()
-        model_roberta.load_state_dict(state_dict, strict=False)
-        print(f"✓ 分类模型加载成功: {HF_REPO_ID}")
-    except Exception as e2:
-        raise RuntimeError(f"无法从 {HF_REPO_ID} 加载模型权重: {e2}")
+    raise RuntimeError(f"无法加载模型权重: {e}")
 
 model_roberta.eval()
+print("✓ 模型就绪")
 
 # mT5 降级模型 - 延迟加载，只有在 API 失败时才加载
 _model_mt5_cache = {"model": None, "tokenizer": None}
@@ -233,13 +234,15 @@ def split_into_sentences(text: str) -> List[str]:
 def roberta_predict(sentence: str) -> Dict[str, float]:
     """预测句子是否包含违规"""
     if model_roberta is None or tokenizer_roberta is None:
-        # 模型未加载时返回空结果
         return {key: 0.0 for key in INDICATOR_KEYS}
     
     inputs = tokenizer_roberta(sentence, return_tensors="pt", truncation=True, max_length=512)
+    input_ids = inputs["input_ids"]
+    attention_mask = inputs.get("attention_mask", torch.ones_like(input_ids))
+    
     with torch.no_grad():
-        outputs = model_roberta(**inputs)
-        probs = torch.sigmoid(outputs.logits).squeeze().tolist()
+        logits = model_roberta(input_ids, attention_mask=attention_mask)
+        probs = torch.sigmoid(logits).squeeze().tolist()
     
     if not isinstance(probs, list):
         probs = [probs]
