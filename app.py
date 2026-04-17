@@ -6,12 +6,14 @@
   - "local" : 本地 GGUF (llama-cpp-python + Phi-4 Mini Q6_K)
   - "api"   : HuggingFace Inference API (默认，无需本地编译)
 """
+from __future__ import annotations
+
 import json
 import os
 import re
 import logging
 from datetime import datetime
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
@@ -101,9 +103,10 @@ if LLM_MODE == "api":
 # ==========================================
 # RAG 组件初始化
 # ==========================================
-legal_kb_loader: Optional[LegalKBLoader] = None
-vector_store: Optional[VectorStore] = None
-retriever: Optional[Retriever] = None
+# 使用 Any 类型注解，避免 RAG 模块导入失败时 NameError
+legal_kb_loader: Optional[Any] = None
+vector_store: Optional[Any] = None
+retriever: Optional[Any] = None
 
 def initialize_rag():
     """初始化 RAG 组件"""
