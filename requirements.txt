@@ -17,7 +17,7 @@ python-multipart==0.0.6
 transformers>=4.35.0
 sentence-transformers>=2.2.2
 huggingface_hub>=0.20.0  # InferenceClient 用于 HF 模式
-openai>=1.0.0            # SiliconFlow OpenAI 兼容接口（siliconflow 模式）
+openai>=1.0.0            # OpenAI 兼容接口（GitHub Models 模式）
 
 # 本地 GGUF 模式可选依赖（Dockerfile.local 中安装）
 # llama-cpp-python>=0.2.90

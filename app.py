@@ -3,13 +3,13 @@
 整合了 RAG 架构的法律知识库检索
 
 整改生成模型支持三种模式（通过环境变量 LLM_MODE 切换）:
-  - "siliconflow" : SiliconFlow API (默认，推荐，OpenAI 兼容接口)
-  - "local"        : 本地 GGUF (llama-cpp-python + Phi-4 Mini Q6_K)
-  - "hf"           : HuggingFace Inference API (需 Token 有 Inference 权限)
+  - "github"  : GitHub Models (默认，推荐，免费 Phi-4 Mini，OpenAI 兼容接口)
+  - "local"   : 本地 GGUF (llama-cpp-python + Phi-4 Mini Q6_K)
+  - "hf"      : HuggingFace Inference API (需 Token 有 Inference 权限)
 
 Token 分工：
-  - HF_TOKEN       : 仓库通行证，用于下载模型权重（RoBERTa、嵌入模型、私有 .ckpt）
-  - SILICON_API_KEY: 大脑通行证，用于调用 SiliconFlow 上的 Phi-4 Mini 推理
+  - HF_TOKEN    : 仓库通行证，用于下载模型权重（RoBERTa、嵌入模型、私有 .ckpt）
+  - GITHUB_TOKEN: 大脑通行证，用于调用 GitHub Models 上的 Phi-4 Mini 推理
 """
 from __future__ import annotations
 
@@ -40,10 +40,10 @@ logger = logging.getLogger(__name__)
 # ==========================================
 # LLM 模式配置
 # ==========================================
-LLM_MODE = os.getenv("LLM_MODE", "siliconflow")  # "siliconflow" | "local" | "hf"
-HF_TOKEN = os.getenv("HF_TOKEN", "")              # HF 仓库通行证：下载模型权重（必留！）
-SILICON_API_KEY = os.getenv("SILICON_API_KEY", "") # SiliconFlow 大脑通行证：Phi-4 推理
-LLM_MODEL_ID = os.getenv("LLM_MODEL_ID", "microsoft/Phi-4-mini-instruct")
+LLM_MODE = os.getenv("LLM_MODE", "github")   # "github" | "local" | "hf"
+HF_TOKEN = os.getenv("HF_TOKEN", "")          # HF 仓库通行证：下载模型权重（必留！）
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")  # GitHub Models 通行证：Phi-4 推理
+LLM_MODEL_ID = os.getenv("LLM_MODEL_ID", "Phi-4-mini-instruct")  # GitHub Models 上的模型 ID
 
 # ==========================================
 # 导入 RAG 模块
@@ -138,7 +138,7 @@ print("✅ RoBERTa 分类模型加载完成（CustomBertMoeModel + fc 分类头�
 
 # 2. 加载整改生成模型（支持三种模式）
 llm = None           # type: ignore  # HF InferenceClient (hf 模式)
-llm_silicon = None   # type: ignore  # OpenAI 兼容客户端 (siliconflow 模式)
+llm_github = None    # type: ignore  # OpenAI 兼容客户端 (github 模式)
 
 if LLM_MODE == "local":
     # 本地模式：使用 llama-cpp-python 加载 GGUF
@@ -156,23 +156,23 @@ if LLM_MODE == "local":
         )
         print(f"✅ Phi-4 Mini 本地模式加载完成 (GGUF, Q6_K)")
     except Exception as e:
-        logger.warning(f"本地 GGUF 模式加载失败，回退到 siliconflow 模式: {e}")
-        LLM_MODE = "siliconflow"
+        logger.warning(f"本地 GGUF 模式加载失败，回退到 github 模式: {e}")
+        LLM_MODE = "github"
 
-if LLM_MODE == "siliconflow":
-    # SiliconFlow 模式：OpenAI 兼容接口，调用 Phi-4 Mini（推荐，稳定快速）
+if LLM_MODE == "github":
+    # GitHub Models 模式：OpenAI 兼容接口，免费调用 Phi-4 Mini
     try:
         from openai import OpenAI
-        llm_silicon = OpenAI(
-            api_key=SILICON_API_KEY,
-            base_url="https://api.siliconflow.cn/v1"
+        llm_github = OpenAI(
+            base_url="https://models.inference.ai.azure.com",
+            api_key=GITHUB_TOKEN,
         )
-        print(f"✅ 整改生成模型: SiliconFlow API 模式 (model={LLM_MODEL_ID})")
+        print(f"✅ 整改生成模型: GitHub Models API 模式 (model={LLM_MODEL_ID})")
     except ImportError:
         logger.warning("openai 包未安装，回退到 HF Inference API 模式")
         LLM_MODE = "hf"
     except Exception as e:
-        logger.warning(f"SiliconFlow 初始化失败，回退到 HF Inference API 模式: {e}")
+        logger.warning(f"GitHub Models 初始化失败，回退到 HF Inference API 模式: {e}")
         LLM_MODE = "hf"
 
 if LLM_MODE == "hf":
@@ -566,15 +566,15 @@ async def rectify_snippet(
 3. 不改变原条款的核心业务意图，仅修正不合规之处"""
         system_content = "你是一位隐私政策合规专家。请直接输出改写后的完整合规条款文本，不要添加任何解释、标注或前缀。"
 
-    # 调用 LLM 生成整改建议（兼容三种模式：siliconflow / local / hf）
+    # 调用 LLM 生成整改建议（兼容三种模式：github / local / hf）
     messages = [
         {"role": "system", "content": system_content},
         {"role": "user", "content": user_content}
     ]
 
-    if LLM_MODE == "siliconflow" and llm_silicon is not None:
-        # SiliconFlow 模式（推荐）：OpenAI 兼容接口
-        response = llm_silicon.chat.completions.create(
+    if LLM_MODE == "github" and llm_github is not None:
+        # GitHub Models 模式（推荐）：OpenAI 兼容接口，免费 Phi-4
+        response = llm_github.chat.completions.create(
             model=LLM_MODEL_ID,
             messages=messages,
             max_tokens=512,
