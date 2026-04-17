@@ -12,10 +12,14 @@ bcrypt==4.1.2
 python-jose==3.3.0
 python-multipart==0.0.6
 
-# ML/AI Models（torch 和 llama-cpp-python 在 Dockerfile 中单独安装）
+# ML/AI Models
+# torch 在 Dockerfile 中单独安装（CPU 预编译 wheel）
 transformers>=4.35.0
 sentence-transformers>=2.2.2
-huggingface_hub>=0.20.0
+huggingface_hub>=0.20.0  # InferenceClient 用于 API 模式
+
+# 本地 GGUF 模式可选依赖（Dockerfile.local 中安装）
+# llama-cpp-python>=0.2.90
 
 # Vector Store
 faiss-cpu>=1.7.4

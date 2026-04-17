@@ -1,8 +1,13 @@
 """
 隐私政策合规审查 API
 整合了 RAG 架构的法律知识库检索
+
+整改生成模型支持两种模式（通过环境变量 LLM_MODE 切换）:
+  - "local" : 本地 GGUF (llama-cpp-python + Phi-4 Mini Q6_K)
+  - "api"   : HuggingFace Inference API (默认，无需本地编译)
 """
 import json
+import os
 import re
 import logging
 from datetime import datetime
@@ -16,9 +21,7 @@ from sqlalchemy.orm import Session
 
 import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
-
-from llama_cpp import Llama
-from huggingface_hub import hf_hub_download
+from huggingface_hub import hf_hub_download, InferenceClient
 
 from models import User, Project, get_db, init_db, Article, RetrievedChunk
 from auth import router as auth_router, get_current_user
@@ -26,6 +29,13 @@ from auth import router as auth_router, get_current_user
 # 配置日志
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# ==========================================
+# LLM 模式配置
+# ==========================================
+LLM_MODE = os.getenv("LLM_MODE", "api")  # "local" 或 "api"
+HF_TOKEN = os.getenv("HF_TOKEN", "")     # HF API Token（免费额度即可）
+LLM_MODEL_ID = os.getenv("LLM_MODEL_ID", "microsoft/Phi-4-mini-instruct")
 
 # ==========================================
 # 导入 RAG 模块
@@ -61,18 +71,32 @@ model_roberta.load_state_dict(state_dict, strict=False)
 model_roberta.eval()
 print("RoBERTa 分类模型加载完成")
 
-# 2. 加载 Phi-4 Mini 整改生成模型 (Q6_K GGUF，从 HF Hub 下载)
-phi4_gguf_path = hf_hub_download(
-    repo_id="tensorblock/Phi-4-mini-instruct-GGUF",
-    filename="Phi-4-mini-instruct-Q6_K.gguf"
-)
-llm = Llama(
-    model_path=phi4_gguf_path,
-    n_ctx=2048,
-    n_threads=4,
-    verbose=False
-)
-print("Phi-4 Mini 整改生成模型加载完成")
+# 2. 加载整改生成模型（支持 local / api 双模式）
+llm = None  # type: ignore
+
+if LLM_MODE == "local":
+    # 本地模式：使用 llama-cpp-python 加载 GGUF
+    try:
+        from llama_cpp import Llama as LocalLlama
+        phi4_gguf_path = hf_hub_download(
+            repo_id="tensorblock/Phi-4-mini-instruct-GGUF",
+            filename="Phi-4-mini-instruct-Q6_K.gguf"
+        )
+        llm = LocalLlama(
+            model_path=phi4_gguf_path,
+            n_ctx=2048,
+            n_threads=4,
+            verbose=False
+        )
+        print(f"✅ Phi-4 Mini 本地模式加载完成 (GGUF, Q6_K)")
+    except Exception as e:
+        logger.warning(f"本地 GGUF 模式加载失败，回退到 API 模式: {e}")
+        LLM_MODE = "api"
+
+if LLM_MODE == "api":
+    # API 模式：使用 HuggingFace Inference API（无需本地编译，部署极快）
+    llm = InferenceClient(model=LLM_MODEL_ID, token=HF_TOKEN or None)
+    print(f"✅ 整改生成模型: HF Inference API 模式 (model={LLM_MODEL_ID})")
 
 # ==========================================
 # RAG 组件初始化
@@ -454,15 +478,28 @@ async def rectify_snippet(
 3. 不改变原条款的核心业务意图，仅修正不合规之处"""
         system_content = "你是一位隐私政策合规专家。请直接输出改写后的完整合规条款文本，不要添加任何解释、标注或前缀。"
 
-    response = llm.create_chat_completion(
-        messages=[
-            {"role": "system", "content": system_content},
-            {"role": "user", "content": user_content}
-        ],
-        max_tokens=512,
-        temperature=0.3,
-    )
-    suggested_text = response["choices"][0]["message"]["content"].strip()
+    # 调用 LLM 生成整改建议（兼容 local / api 双模式)
+    messages = [
+        {"role": "system", "content": system_content},
+        {"role": "user", "content": user_content}
+    ]
+
+    if LLM_MODE == "local" and hasattr(llm, 'create_chat_completion'):
+        # 本地 GGUF 模式
+        response = llm.create_chat_completion(
+            messages=messages,
+            max_tokens=512,
+            temperature=0.3,
+        )
+        suggested_text = response["choices"][0]["message"]["content"].strip()
+    else:
+        # HF Inference API 模式
+        response = llm.chat_completion(
+            messages=messages,
+            max_tokens=512,
+            temperature=0.3,
+        )
+        suggested_text = response.choices[0].message.content.strip()
     
     return {
         "suggested_text": suggested_text,

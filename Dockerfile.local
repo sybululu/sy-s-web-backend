@@ -1,0 +1,30 @@
+# 本地 GGUF 模式 Dockerfile（需要编译 llama-cpp-python，构建时间较长）
+# 使用方式: docker build -f Dockerfile.local .
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt .
+
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+
+# 本地模式：安装 llama-cpp-python（源码编译，约 15-25 分钟）
+RUN CMAKE_ARGS="-DLLAMA_BLAS=OFF -DLLAMA_CUDA=OFF -DLLAMA_METAL=OFF -DLLAMA_VULKAN=OFF -DLLAMA_ACCELERATE=OFF -DLLAMA_CLBLAST=OFF" \
+    pip install --no-cache-dir llama-cpp-python \
+    --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+EXPOSE 7860
+
+# 本地 GGUF 模式
+ENV LLM_MODE=local
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7860"]

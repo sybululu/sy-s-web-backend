@@ -1,38 +1,29 @@
-# 使用 Python 3.11 镜像（torch/llama-cpp-python 兼容性最佳）
+# 隐私政策合规审查系统 - 后端
+#
+# 默认使用 HuggingFace Inference API（极速部署，~1分钟构建）
+# 如需本地 GGUF 模式，设置环境变量 LLM_MODE=local 并使用 Dockerfile.local
 FROM python:3.11-slim
 
-# 安装系统依赖（llama-cpp-python 源码编译需要 cmake + build-essential）
+# 安装最小系统依赖（仅 torch 编译需要，不再需要 cmake）
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    cmake \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# 设置工作目录
 WORKDIR /app
 
-# 复制依赖文件
 COPY requirements.txt .
 
-# 1. 安装 torch（CPU 预编译 wheel，~18秒完成）
+# 1. 安装 torch（CPU 预编译 wheel，~18秒）
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 
-# 2. 安装 llama-cpp-python（纯 CPU 编译优化）
-#    abetlen 索引对 0.3.x 无 manylinux_2_28 预编译包，必须源码编译
-#    CMAKE_ARGS 禁用所有非 CPU 后端，大幅缩减编译时间
-RUN CMAKE_ARGS="-DLLAMA_BLAS=OFF -LLAMA_CUDA=OFF -LLAMA_METAL=OFF -LLAMA_VULKAN=OFF -LLAMA_ACCELERATE=OFF -LLAMA_CLBLAST=OFF" \
-    pip install --no-cache-dir llama-cpp-python==0.2.90 \
-    --no-binary :all: \
-    --config-settings="cmake.args=-DLLAMA_NATIVE=OFF"
-
-# 3. 安装其余 Python 依赖
+# 2. 安装其余依赖（不含 llama-cpp-python，使用 HF Inference API）
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 复制所有代码到工作目录
 COPY . .
 
-# 暴露端口
 EXPOSE 7860
 
-# 启动 FastAPI 服务
+# 环境变量说明:
+#   LLM_MODE=api        (默认) 使用 HuggingFace Inference API，需设置 HF_TOKEN
+#   LLM_MODEL_ID         默认 microsoft/Phi-4-mini-instruct，可替换为其他模型
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7860"]
