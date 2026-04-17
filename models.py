@@ -89,6 +89,7 @@ class AnalyzeResponse(BaseModel):
 class RectifyRequest(BaseModel):
     original_snippet: str
     violation_type: str
+    legal_basis: Optional[str] = None
 
 class UrlRequest(BaseModel):
     url: str

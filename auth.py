@@ -112,18 +112,6 @@ async def get_current_user(
     return user
 
 
-async def get_current_user_from_token(token: str, db: Session) -> Optional[User]:
-    """从 token 字符串获取用户（用于 query string 认证）"""
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id = payload.get("sub")
-        if user_id is None:
-            return None
-        user = db.query(User).filter(User.id == int(user_id)).first()
-        return user
-    except JWTError:
-        return None
-
 # ==========================================
 # API 端点
 # ==========================================
