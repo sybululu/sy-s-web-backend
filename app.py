@@ -77,16 +77,28 @@ except Exception as e:
         logger.error(f"降级模型加载也失败: {e2}")
         model_roberta = None
 
-# mT5 作为降级方案
+# mT5 降级模型 - 延迟加载，只有在 API 失败时才加载
+_model_mt5_cache = {"model": None, "tokenizer": None}
+
+def get_fallback_model():
+    """延迟加载 mT5 降级模型，避免占用内存"""
+    global model_mt5, tokenizer_mt5
+    
+    if _model_mt5_cache["model"] is None:
+        try:
+            _model_mt5_cache["tokenizer"] = AutoTokenizer.from_pretrained("google/mt5-base")
+            _model_mt5_cache["model"] = MT5ForConditionalGeneration.from_pretrained("google/mt5-base")
+            _model_mt5_cache["model"].eval()
+            print("✓ mT5 降级模型加载成功（延迟加载）")
+        except Exception as e:
+            logger.warning(f"mT5 模型加载失败: {e}")
+            return None, None
+    
+    return _model_mt5_cache["model"], _model_mt5_cache["tokenizer"]
+
+# 初始化为 None，启动时不加载
 model_mt5 = None
 tokenizer_mt5 = None
-try:
-    tokenizer_mt5 = AutoTokenizer.from_pretrained("google/mt5-base")
-    model_mt5 = MT5ForConditionalGeneration.from_pretrained("google/mt5-base")
-    model_mt5.eval()
-    print("✓ mT5 降级模型加载成功")
-except Exception as e:
-    logger.warning(f"mT5 模型加载失败: {e}")
 
 print("模型加载完成！")
 
@@ -193,7 +205,8 @@ class UrlRequest(BaseModel):
 # 辅助函数
 # ==========================================
 def split_into_sentences(text: str) -> List[str]:
-    sentences = re.split(r'[。；\n]+', text)
+    # 使用正向预查保留标点，避免句子末尾标点丢失
+    sentences = re.split(r'(?<=[。；\n])', text)
     return [s.strip() for s in sentences if len(s.strip()) > 5]
 
 def roberta_predict(sentence: str) -> Dict[str, float]:
@@ -342,18 +355,17 @@ async def analyze(
         for indicator, prob in probs.items():
             if prob > 0.5:
                 violation_flags[indicator] = 1
-                if not any(v["indicator"] == indicator for v in violations_list):
-                    # 获取违规类型ID
-                    violation_id = INDICATORS[indicator]["id"]
-                    # 使用 RAG 获取法律依据
-                    legal_basis = get_legal_basis_from_rag(violation_id, context=sentence)
-                    
-                    violations_list.append({
-                        "indicator": indicator,
-                        "violation_id": violation_id,
-                        "snippet": sentence,
-                        "legal_basis": legal_basis
-                    })
+                # 记录所有违规句子，不再限制只报一次
+                # 这样用户能看到所有违规位置，便于逐一整改
+                violation_id = INDICATORS[indicator]["id"]
+                legal_basis = get_legal_basis_from_rag(violation_id, context=sentence)
+                
+                violations_list.append({
+                    "indicator": indicator,
+                    "violation_id": violation_id,
+                    "snippet": sentence,
+                    "legal_basis": legal_basis
+                })
 
     penalty = sum(INDICATORS[ind]["weight"] * vi for ind, vi in violation_flags.items())
     total_score = round(max(0.0, 100.0 - (penalty * 100.0)), 1)
@@ -415,8 +427,8 @@ async def rectify_snippet(
     # 获取 RAG 法律依据
     legal_context = request.legal_basis if request.legal_basis else get_legal_basis_from_rag(request.violation_type, context=request.original_snippet)
     
-    # 提取法律关键词用于增强 prompt
-    legal_keywords = extract_legal_keywords(legal_context)
+    # 提取法律关键词用于增强 prompt，传入 violation_id 做兜底
+    legal_keywords = extract_legal_keywords(legal_context, request.violation_type)
     
     suggested_text = ""
     
@@ -445,22 +457,24 @@ async def rectify_snippet(
             logger.error(f"HF Inference API 生成失败: {e}")
             suggested_text = ""
     
-    # 降级方案：使用 mT5
-    if not suggested_text and model_mt5 is not None and tokenizer_mt5 is not None:
-        try:
-            mt5_prompt = f"""请将以下隐私政策条款改写为符合法律规范的版本。
+    # 降级方案：延迟加载 mT5（仅在 API 失败后加载）
+    if not suggested_text:
+        fallback_model, fallback_tokenizer = get_fallback_model()
+        if fallback_model is not None and fallback_tokenizer is not None:
+            try:
+                mt5_prompt = f"""请将以下隐私政策条款改写为符合法律规范的版本。
 【整改要求】{violation_hint}
 【原条款】{request.original_snippet}
 【合规改写】"""
-            
-            inputs = tokenizer_mt5(mt5_prompt, return_tensors="pt", truncation=True, max_length=512)
-            with torch.no_grad():
-                outputs = model_mt5.generate(**inputs, max_length=256, temperature=0.3, do_sample=True)
-            suggested_text = tokenizer_mt5.decode(outputs[0], skip_special_tokens=True)
-            logger.info(f"mT5 降级生成成功")
-        except Exception as e:
-            logger.error(f"mT5 生成失败: {e}")
-            suggested_text = ""
+                
+                inputs = fallback_tokenizer(mt5_prompt, return_tensors="pt", truncation=True, max_length=512)
+                with torch.no_grad():
+                    outputs = fallback_model.generate(**inputs, max_length=256, temperature=0.3, do_sample=True)
+                suggested_text = fallback_tokenizer.decode(outputs[0], skip_special_tokens=True)
+                logger.info(f"mT5 降级生成成功")
+            except Exception as e:
+                logger.error(f"mT5 生成失败: {e}")
+                suggested_text = ""
     
     # 最终降级：基于规则的通用建议
     if not suggested_text:
@@ -472,9 +486,31 @@ async def rectify_snippet(
     }
 
 
-def extract_legal_keywords(legal_context: str) -> str:
-    """从法律依据中提取关键要求"""
+def extract_legal_keywords(legal_context: str, violation_id: str = None) -> str:
+    """从法律依据中提取关键要求
+    
+    Args:
+        legal_context: RAG 检索返回的法律依据文本
+        violation_id: 违规类型 ID（如 I1, I2），用于兜底
+    """
     if not legal_context:
+        # 如果没有检索到法律依据，使用违规类型的语义化描述作为兜底
+        if violation_id:
+            fallback_map = {
+                "I1": "《个人信息保护法》第六条：收集个人信息应当具有明确、合理的目的，并遵循最小必要原则。",
+                "I2": "《个人信息保护法》第十七条：处理个人信息应当告知个人处理目的、方式和范围。",
+                "I3": "《个人信息保护法》第十三条：处理个人信息应当取得个人的同意。",
+                "I4": "《个人信息保护法》第六条：收集个人信息的范围应当与处理目的直接相关。",
+                "I5": "《个人信息保护法》第二十三条：向第三方提供个人信息应当告知并取得单独同意。",
+                "I6": "《个人信息保护法》第二十三条：向第三方提供个人信息应当取得个人的明示同意。",
+                "I7": "《个人信息保护法》第二十三条：应当告知个人第三方使用信息的目的和范围。",
+                "I8": "《个人信息保护法》第十九条：个人信息的保存期限应当为实现处理目的所必需的最短时间。",
+                "I9": "《个人信息保护法》第十九条：保存期限届满应当予以删除或匿名化处理。",
+                "I10": "《个人信息保护法》第四十四条至第四十五条：个人享有查阅、复制、更正、删除等权利。",
+                "I11": "《个人信息保护法》第五十条：应当提供便捷的渠道供个人行使权利。",
+                "I12": "《个人信息保护法》第五十条：应当在合理期限内处理个人的请求。",
+            }
+            return fallback_map.get(violation_id, "遵循《个人信息保护法》相关规定")
         return "遵循《个人信息保护法》相关规定"
     
     # 提取法条编号
@@ -492,10 +528,14 @@ def extract_legal_keywords(legal_context: str) -> str:
         keywords.append("最小必要原则")
     if "目的" in legal_context:
         keywords.append("明确处理目的")
-    if "删除" in legal_context:
-        keywords.append("数据删除机制")
+    if "删除" in legal_context or "匿名" in legal_context:
+        keywords.append("数据删除/匿名化")
     if "第三方" in legal_context:
         keywords.append("第三方共享限制")
+    if "权利" in legal_context:
+        keywords.append("用户权利保障")
+    if "期限" in legal_context or "时间" in legal_context:
+        keywords.append("响应时限")
     
     result = ""
     if law_names:
@@ -504,6 +544,10 @@ def extract_legal_keywords(legal_context: str) -> str:
         result += "、".join(articles[:3]) + "。"
     if keywords:
         result += "核心要求：" + "、".join(keywords[:4])
+    
+    # 最终兜底：如果什么都没提取到
+    if not result and violation_id:
+        return extract_legal_keywords("", violation_id)
     
     return result or "遵循个人信息保护相关法律法规"
 
