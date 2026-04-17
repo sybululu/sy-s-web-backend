@@ -85,7 +85,14 @@ class CustomBertMoeModel(nn.Module):
         # 与训练代码一致：num_classes=11，分类层命名为 fc
         self.fc = nn.Linear(768, 11)
 
-    def forward(self, input_ids, attention_mask=None):
+    def forward(self, input_ids, attention_mask=None, **kwargs):
+        """
+        前向传播：与训练代码结构完全一致。
+
+        注意：必须接受 **kwargs，因为 transformers 的 tokenizer 在调用 model(**inputs)
+        时会传入 token_type_ids 等额外关键字参数。训练时的 forward 只接收位置参数
+        并通过索引取值（x[0], x[2]），生产环境需要兼容这种多参数传入方式。
+        """
         outputs = self.bert(input_ids, attention_mask=attention_mask)
         pooled_output = outputs.pooler_output  # [batch, 768]
         return self.fc(pooled_output)          # [batch, 11]
@@ -262,7 +269,7 @@ def roberta_predict(sentence: str) -> Dict[str, float]:
     返回格式: {violation_id: probability}
     例如: {"I1": 0.82, "I4": 0.82}  (11类第0类"数据收集"映射到 I1+I4)
     """
-    inputs = tokenizer_roberta(sentence, return_tensors="pt", truncation=True, max_length=512)
+    inputs = tokenizer_roberta(sentence, return_tensors="pt", truncation=True, max_length=150)
     with torch.no_grad():
         outputs = model_roberta(**inputs)
         # CustomBertMoeModel 直接返回 logits tensor（非 SequenceClassifierOutput 对象）
