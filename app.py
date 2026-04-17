@@ -44,15 +44,57 @@ except ImportError as e:
 # ==========================================
 print("正在加载真实模型，这可能需要几分钟...")
 
-# 1. 加载 RoBERTa 风险分类模型
-tokenizer_roberta = AutoTokenizer.from_pretrained("hfl/chinese-roberta-wwm-ext")
-model_roberta = AutoModelForSequenceClassification.from_pretrained("./models/roberta-compliance", num_labels=12)
-model_roberta.eval()
+# HuggingFace Hub 配置
+HF_TOKEN = os.environ.get("HF_TOKEN", "")
+HF_REPO_ID = os.environ.get("HF_REPO_ID", "sybululu/bert-moe")
+
+# 1. 加载风险分类模型
+try:
+    # 优先使用 HuggingFace Hub 上的微调模型
+    tokenizer_roberta = AutoTokenizer.from_pretrained("hfl/chinese-roberta-wwm-ext")
+    model_roberta = AutoModelForSequenceClassification.from_pretrained(
+        HF_REPO_ID, 
+        num_labels=12,
+        token=HF_TOKEN or None,
+        ignore_mismatched_sizes=True
+    )
+    model_roberta.eval()
+    print(f"✓ 分类模型加载成功: {HF_REPO_ID}")
+except Exception as e:
+    logger.warning(f"无法从 {HF_REPO_ID} 加载分类模型: {e}")
+    logger.warning("使用基础 RoBERTa 模型作为降级方案")
+    try:
+        model_roberta = AutoModelForSequenceClassification.from_pretrained(
+            "hfl/chinese-roberta-wwm-ext", 
+            num_labels=12
+        )
+        model_roberta.eval()
+    except Exception as e2:
+        logger.error(f"降级模型加载也失败: {e2}")
+        model_roberta = None
 
 # 2. 加载 mT5 整改生成模型
-tokenizer_mt5 = AutoTokenizer.from_pretrained("google/mt5-base")
-model_mt5 = MT5ForConditionalGeneration.from_pretrained("./models/mt5-compliance")
-model_mt5.eval()
+try:
+    # 尝试从 HuggingFace Hub 加载微调模型
+    model_mt5 = MT5ForConditionalGeneration.from_pretrained(
+        HF_REPO_ID,
+        token=HF_TOKEN or None,
+        ignore_mismatched_sizes=True
+    )
+    tokenizer_mt5 = AutoTokenizer.from_pretrained("google/mt5-base")
+    print(f"✓ 生成模型加载成功")
+except Exception as e:
+    logger.warning(f"无法加载微调生成模型: {e}")
+    logger.warning("使用基础 mT5 模型")
+    try:
+        tokenizer_mt5 = AutoTokenizer.from_pretrained("google/mt5-base")
+        model_mt5 = MT5ForConditionalGeneration.from_pretrained("google/mt5-base")
+        model_mt5.eval()
+        print("✓ 基础 mT5 模型加载成功")
+    except Exception as e2:
+        logger.error(f"基础 mT5 模型加载也失败: {e2}")
+        model_mt5 = None
+        tokenizer_mt5 = None
 
 print("模型加载完成！")
 
@@ -162,6 +204,11 @@ def split_into_sentences(text: str) -> List[str]:
     return [s.strip() for s in sentences if len(s.strip()) > 5]
 
 def roberta_predict(sentence: str) -> Dict[str, float]:
+    """预测句子是否包含违规"""
+    if model_roberta is None or tokenizer_roberta is None:
+        # 模型未加载时返回空结果
+        return {key: 0.0 for key in INDICATOR_KEYS}
+    
     inputs = tokenizer_roberta(sentence, return_tensors="pt", truncation=True, max_length=512)
     with torch.no_grad():
         outputs = model_roberta(**inputs)
@@ -395,10 +442,19 @@ async def rectify_snippet(
 【合规改写】
 """
     
-    inputs = tokenizer_mt5(prompt, return_tensors="pt", truncation=True, max_length=512)
-    with torch.no_grad():
-        outputs = model_mt5.generate(**inputs, max_length=256, temperature=0.3, do_sample=True)
-    suggested_text = tokenizer_mt5.decode(outputs[0], skip_special_tokens=True)
+    # 使用 mT5 生成整改建议
+    if model_mt5 is None or tokenizer_mt5 is None:
+        # 模型未加载时返回基于规则的通用建议
+        suggested_text = f"建议修改条款内容，确保符合《个人信息保护法》等隐私法规的合规要求。"
+    else:
+        try:
+            inputs = tokenizer_mt5(prompt, return_tensors="pt", truncation=True, max_length=512)
+            with torch.no_grad():
+                outputs = model_mt5.generate(**inputs, max_length=256, temperature=0.3, do_sample=True)
+            suggested_text = tokenizer_mt5.decode(outputs[0], skip_special_tokens=True)
+        except Exception as e:
+            logger.error(f"mT5 生成失败: {e}")
+            suggested_text = f"建议修改条款内容，确保符合相关隐私法规的合规要求。"
     
     return {
         "suggested_text": suggested_text,
