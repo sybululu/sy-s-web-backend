@@ -49,7 +49,8 @@ HF_TOKEN = os.environ.get("HF_TOKEN", "")
 HF_REPO_ID = os.environ.get("HF_REPO_ID", "sybululu/bert-moe")
 
 # GGUF 模型配置 (Phi-4 Mini)
-GGUF_MODEL_PATH = os.environ.get("GGUF_MODEL_PATH", "./models/phi-4-mini-instruct-Q4_K_M.gguf")
+GGUF_MODEL_REPO = os.environ.get("GGUF_MODEL_REPO", "unsloth/phi-4-mini-instruct-GGUF")
+GGUF_MODEL_FILE = os.environ.get("GGUF_MODEL_FILE", "Phi-4-mini-instruct-Q4_K_M.gguf")
 GGUF_N_CTX = int(os.environ.get("GGUF_N_CTX", "2048"))
 GGUF_N_THREADS = int(os.environ.get("GGUF_N_THREADS", "2"))
 
@@ -57,44 +58,43 @@ GGUF_N_THREADS = int(os.environ.get("GGUF_N_THREADS", "2"))
 llm_phi = None
 
 # 1. 加载 Phi-4 Mini GGUF 模型
-try:
-    from llama_cpp import Llama
-    # 检查模型文件是否存在
-    if os.path.exists(GGUF_MODEL_PATH):
+def load_phi_model():
+    """加载 Phi-4 Mini GGUF 模型"""
+    global llm_phi
+    
+    try:
+        from llama_cpp import Llama
+        
+        # 尝试从 HuggingFace Hub 下载
+        logger.info(f"正在从 HF Hub 下载 Phi-4 Mini GGUF 模型: {GGUF_MODEL_REPO}/{GGUF_MODEL_FILE}")
+        from huggingface_hub import hf_hub_download
+        
+        model_path = hf_hub_download(
+            repo_id=GGUF_MODEL_REPO,
+            filename=GGUF_MODEL_FILE,
+            token=HF_TOKEN or None,
+            local_dir="./models",
+            local_dir_use_symlinks=False  # 强制下载完整文件
+        )
+        
+        logger.info(f"模型下载完成: {model_path}")
         llm_phi = Llama(
-            model_path=GGUF_MODEL_PATH,
+            model_path=model_path,
             n_ctx=GGUF_N_CTX,
             n_threads=GGUF_N_THREADS,
             verbose=False
         )
-        print(f"✓ Phi-4 Mini GGUF 模型加载成功: {GGUF_MODEL_PATH}")
-    else:
-        # 尝试从 HuggingFace Hub 下载
-        logger.info("正在从 HuggingFace Hub 下载 Phi-4 Mini GGUF 模型...")
-        from huggingface_hub import hf_hub_download
-        try:
-            downloaded_path = hf_hub_download(
-                repo_id="unsloth/phi-4-mini-instruct-GGUF",
-                filename="Phi-4-mini-instruct-Q4_K_M.gguf",
-                token=HF_TOKEN or None,
-                local_dir="./models"
-            )
-            llm_phi = Llama(
-                model_path=downloaded_path,
-                n_ctx=GGUF_N_CTX,
-                n_threads=GGUF_N_THREADS,
-                verbose=False
-            )
-            print(f"✓ Phi-4 Mini GGUF 模型下载并加载成功")
-        except Exception as e:
-            logger.warning(f"下载 GGUF 模型失败: {e}")
-            print("⚠️ 未找到 Phi-4 Mini 模型，将使用降级方案")
-except ImportError:
-    logger.warning("llama-cpp-python 未安装，无法使用 Phi-4 Mini")
-    print("⚠️ llama-cpp-python 未安装，将使用降级方案")
-except Exception as e:
-    logger.warning(f"加载 Phi-4 Mini GGUF 模型失败: {e}")
-    print(f"⚠️ Phi-4 Mini 模型加载失败: {e}")
+        print(f"✓ Phi-4 Mini GGUF 模型加载成功")
+        return True
+        
+    except ImportError:
+        logger.warning("llama-cpp-python 未安装，跳过 Phi-4 Mini")
+        print("⚠️ llama-cpp-python 未安装，将使用降级方案")
+    except Exception as e:
+        logger.warning(f"加载 Phi-4 Mini GGUF 模型失败: {e}")
+        print(f"⚠️ Phi-4 Mini 模型加载失败: {e}")
+    
+    return False
 
 # 2. 加载 RoBERTa 风险分类模型
 try:
@@ -132,6 +132,15 @@ except Exception as e:
     logger.warning(f"mT5 降级模型加载失败: {e}")
 
 print("模型加载完成！")
+
+# 在后台异步加载 Phi-4 Mini（避免阻塞启动）
+import threading
+def load_model_async():
+    print("后台加载 Phi-4 Mini 模型中...")
+    load_phi_model()
+
+model_loader_thread = threading.Thread(target=load_model_async, daemon=True)
+model_loader_thread.start()
 
 # ==========================================
 # RAG 组件初始化
@@ -462,6 +471,11 @@ async def rectify_snippet(
     legal_keywords = extract_legal_keywords(legal_context)
     
     suggested_text = ""
+    
+    # 等待 Phi-4 Mini 模型加载完成（最多等待 60 秒）
+    if llm_phi is None and model_loader_thread.is_alive():
+        print("等待 Phi-4 Mini 模型加载...")
+        model_loader_thread.join(timeout=60)
     
     # 优先使用 Phi-4 Mini GGUF
     if llm_phi is not None:
