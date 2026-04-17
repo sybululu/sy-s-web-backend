@@ -54,10 +54,18 @@ USE_HF_API = os.environ.get("USE_HF_API", "0") == "1"
 HF_INFERENCE_MODEL = os.environ.get("HF_INFERENCE_MODEL", "microsoft/phi-4-mini-instruct")
 
 # 1. 加载 RoBERTa 风险分类模型 (sybululu/bert-moe)
+# 你的模型缺少 config.json，需要从 hfl/chinese-roberta-wwm-ext 获取基础配置
+from transformers import AutoConfig
+
 tokenizer_roberta = AutoTokenizer.from_pretrained("hfl/chinese-roberta-wwm-ext")
+
+# 从基础模型获取配置，然后修改 num_labels
+base_config = AutoConfig.from_pretrained("hfl/chinese-roberta-wwm-ext")
+base_config.num_labels = 12
+
 model_roberta = AutoModelForSequenceClassification.from_pretrained(
-    HF_REPO_ID, 
-    num_labels=12,
+    HF_REPO_ID,
+    config=base_config,
     token=HF_TOKEN or None,
     ignore_mismatched_sizes=True
 )
