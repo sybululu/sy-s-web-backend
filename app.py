@@ -255,6 +255,7 @@ def roberta_predict(sentence: str) -> Dict[str, float]:
     预测句子是否包含违规
     
     模型输出 11 类，使用 map_to_12_classes 映射到 12 类指标
+    支持 confidence 双重过滤
     """
     if model_roberta is None or tokenizer_roberta is None:
         return {key: 0.0 for key in INDICATOR_KEYS}
@@ -265,6 +266,14 @@ def roberta_predict(sentence: str) -> Dict[str, float]:
     
     with torch.no_grad():
         logits = model_roberta(input_ids, attention_mask=attention_mask)
+        
+        # 计算 confidence = max(logits) - mean(logits)
+        logits_squeezed = logits.squeeze()
+        if logits_squeezed.dim() > 0:
+            confidence_val = (logits_squeezed.max() - logits_squeezed.mean()).item()
+        else:
+            confidence_val = None
+        
         probs = torch.sigmoid(logits).squeeze().tolist()
     
     if not isinstance(probs, list):
@@ -273,14 +282,13 @@ def roberta_predict(sentence: str) -> Dict[str, float]:
     # 初始化所有 12 类为 0
     result = {key: 0.0 for key in INDICATOR_KEYS}
     
-    # 使用 map_to_12_classes 进行映射
-    violation_ids = map_to_12_classes(probs)
+    # 使用 map_to_12_classes 进行映射 (传入 confidence 做双重过滤)
+    violation_ids = map_to_12_classes(probs, confidence=confidence_val)
     
     # 将返回的 violation_id 列表映射到中文名称
     for vid in violation_ids:
         indicator_name = VIOLATION_NAMES.get(vid)
         if indicator_name and indicator_name in result:
-            # 取该类别对应的概率值
             max_idx = probs.index(max(probs))
             result[indicator_name] = max(probs)
     
