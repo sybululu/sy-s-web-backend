@@ -54,23 +54,49 @@ USE_HF_API = os.environ.get("USE_HF_API", "0") == "1"
 HF_INFERENCE_MODEL = os.environ.get("HF_INFERENCE_MODEL", "microsoft/phi-4-mini-instruct")
 
 # 1. 加载 RoBERTa 风险分类模型 (sybululu/bert-moe)
-# 你的模型缺少 config.json，需要从 hfl/chinese-roberta-wwm-ext 获取基础配置
-from transformers import AutoConfig
+# 你的模型缺少 config.json，需要手动构建架构
+from transformers import BertConfig, BertForSequenceClassification
+from huggingface_hub import hf_hub_download
+import torch
 
 tokenizer_roberta = AutoTokenizer.from_pretrained("hfl/chinese-roberta-wwm-ext")
 
-# 从基础模型获取配置，然后修改 num_labels
-base_config = AutoConfig.from_pretrained("hfl/chinese-roberta-wwm-ext")
+# 从基础模型获取配置
+base_config = BertConfig.from_pretrained("hfl/chinese-roberta-wwm-ext")
 base_config.num_labels = 12
 
-model_roberta = AutoModelForSequenceClassification.from_pretrained(
-    HF_REPO_ID,
-    config=base_config,
-    token=HF_TOKEN or None,
-    ignore_mismatched_sizes=True
-)
+# 手动创建模型架构
+model_roberta = BertForSequenceClassification(config=base_config)
+
+# 尝试加载权重文件
+try:
+    # 先尝试 safetensors 格式
+    model_file = hf_hub_download(
+        repo_id=HF_REPO_ID,
+        filename="model.safetensors",
+        token=HF_TOKEN or None
+    )
+    from safetensors.torch import load_file
+    state_dict = load_file(model_file)
+    model_roberta.load_state_dict(state_dict, strict=False)
+    print(f"✓ 分类模型加载成功: {HF_REPO_ID}")
+except Exception as e:
+    try:
+        # 降级到 PyTorch 格式
+        model_file = hf_hub_download(
+            repo_id=HF_REPO_ID,
+            filename="pytorch_model.bin",
+            token=HF_TOKEN or None
+        )
+        state_dict = torch.load(model_file, map_location="cpu")
+        if hasattr(state_dict, 'state_dict'):
+            state_dict = state_dict.state_dict()
+        model_roberta.load_state_dict(state_dict, strict=False)
+        print(f"✓ 分类模型加载成功: {HF_REPO_ID}")
+    except Exception as e2:
+        raise RuntimeError(f"无法从 {HF_REPO_ID} 加载模型权重: {e2}")
+
 model_roberta.eval()
-print(f"✓ 分类模型加载成功: {HF_REPO_ID}")
 
 # mT5 降级模型 - 延迟加载，只有在 API 失败时才加载
 _model_mt5_cache = {"model": None, "tokenizer": None}
