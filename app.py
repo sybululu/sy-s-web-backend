@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 import torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from transformers import AutoTokenizer, BertModel
 from huggingface_hub import hf_hub_download, InferenceClient
 
 from models import User, Project, get_db, init_db, Article, RetrievedChunk
@@ -70,37 +70,58 @@ except ImportError as e:
 # ==========================================
 print("正在从 HuggingFace Hub 加载模型，首次运行需要下载...")
 
-# 1. 加载 RoBERTa 风险分类模型（基础模型 + 微调 checkpoint）
-# 注意：CAPP-130 微调模型输出 11 类标签，通过 mapper.py 映射到 12 类违规类型
+import torch.nn as nn
+from transformers import BertModel
+
+# 1. 加载 RoBERTa 风险分类模型（自定义模型类，完全复现训练时结构）
+# 训练代码中分类层命名为 self.fc（非标准库的 self.classifier），
+# 因此必须自定义模型类来匹配 checkpoint 的键名空间。
+class CustomBertMoeModel(nn.Module):
+    """完全复现训练代码的模型结构：BertModel + fc(768→11)"""
+
+    def __init__(self):
+        super(CustomBertMoeModel, self).__init__()
+        self.bert = BertModel.from_pretrained("hfl/chinese-roberta-wwm-ext")
+        # 与训练代码一致：num_classes=11，分类层命名为 fc
+        self.fc = nn.Linear(768, 11)
+
+    def forward(self, input_ids, attention_mask=None):
+        outputs = self.bert(input_ids, attention_mask=attention_mask)
+        pooled_output = outputs.pooler_output  # [batch, 768]
+        return self.fc(pooled_output)          # [batch, 11]
+
+
+def load_trained_model(ckpt_path: str) -> CustomBertMoeModel:
+    """加载微调 checkpoint 到自定义模型结构"""
+    model = CustomBertMoeModel()
+    state_dict = torch.load(ckpt_path, map_location="cpu", weights_only=True)
+
+    # 仅需移除 "model." 前缀（训练时用 DataParallel 或类似包装），
+    # 无需做 "fc" → "classifier" 的重映射，因为类结构已完全匹配
+    cleaned_state_dict = {
+        k.replace("model.", ""): v for k, v in state_dict.items()
+    }
+
+    # strict=True：由于类结构与训练完全一致，所有键应精确匹配
+    missing, unexpected = model.load_state_dict(cleaned_state_dict, strict=True)
+    if missing:
+        logger.warning(f"RoBERTa 缺失键: {missing}")
+    if unexpected:
+        logger.warning(f"RoBERTa 多余键: {unexpected}")
+
+    model.eval()
+    return model
+
+
+# 初始化 tokenizer 和自定义模型
 tokenizer_roberta = AutoTokenizer.from_pretrained("hfl/chinese-roberta-wwm-ext")
-model_roberta = AutoModelForSequenceClassification.from_pretrained(
-    "hfl/chinese-roberta-wwm-ext", num_labels=11
-)
-# 从 HF Hub 下载微调 checkpoint 并加载
+
 roberta_ckpt_path = hf_hub_download(
     repo_id="sybululu/bert-moe",
     filename="multi_classification_bertmoe.ckpt"
 )
-state_dict = torch.load(roberta_ckpt_path, map_location="cpu", weights_only=True)
-
-# 清理 checkpoint 键名（两步映射）
-# Step 1: 移除 CAPP-130 微调权重带 "model." 前缀
-# Step 2: 将训练时用的 "fc" 分类层名重映射为标准库期望的 "classifier"
-cleaned_state_dict = {}
-for key, value in state_dict.items():
-    new_key = key.replace("model.", "").replace("fc.", "classifier.")
-    cleaned_state_dict[new_key] = value
-
-# strict=False：忽略预训练头中不需要的键（如 cls.predictions 等），
-# 同时容忍微调 checkpoint 与基础模型之间的微小差异
-missing, unexpected = model_roberta.load_state_dict(cleaned_state_dict, strict=False)
-if missing:
-    logger.warning(f"RoBERTa 加载后缺失键（使用随机初始化）: {missing}")
-if unexpected:
-    logger.info(f"RoBERTa 多余键（已跳过，属正常现象）: {unexpected}")
-
-model_roberta.eval()
-print("RoBERTa 分类模型加载完成")
+model_roberta = load_trained_model(roberta_ckpt_path)
+print("✅ RoBERTa 分类模型加载完成（CustomBertMoeModel + fc 分类头）")
 
 # 2. 加载整改生成模型（支持 local / api 双模式）
 llm = None  # type: ignore
@@ -244,8 +265,12 @@ def roberta_predict(sentence: str) -> Dict[str, float]:
     inputs = tokenizer_roberta(sentence, return_tensors="pt", truncation=True, max_length=512)
     with torch.no_grad():
         outputs = model_roberta(**inputs)
-        # 11 类原始 logits（用于计算置信度差值）
-        logits = outputs.logits.squeeze()
+        # CustomBertMoeModel 直接返回 logits tensor（非 SequenceClassifierOutput 对象）
+        if isinstance(outputs, torch.Tensor):
+            logits = outputs.squeeze()
+        else:
+            # 兼容标准库输出格式（以防未来切回 AutoModelForSequenceClassification）
+            logits = outputs.logits.squeeze()
         # 11 类 sigmoid 概率
         probs = torch.sigmoid(logits).tolist()
 
