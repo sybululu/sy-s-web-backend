@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set
 from dataclasses import dataclass, field
 
-from ..models import (
+from src.models import (
     Article,
     LawDocument,
     ViolationMapping,

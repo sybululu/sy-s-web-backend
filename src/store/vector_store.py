@@ -11,7 +11,7 @@ import numpy as np
 import faiss
 from sentence_transformers import SentenceTransformer
 
-from ..models import Article, RetrievedChunk
+from src.models import Article, RetrievedChunk
 
 logger = logging.getLogger(__name__)
 

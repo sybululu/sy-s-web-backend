@@ -156,14 +156,11 @@ __all__ = [
     "INDICATORS", "ID_TO_INDICATOR", "ID_TO_HINT", "ID_TO_RISK_LEVEL",
     "INDICATOR_KEYS", "get_risk_level", "get_hint", "get_legal_basis",
     "to_frontend_list",
-    # 双模式 Prompt
-    "SUMMARY_SYSTEM_PROMPT", "REWRITE_SYSTEM_PROMPT",
-    "build_summary_user_prompt", "build_rewrite_user_prompt",
 ]
 
-
 # ==========================================
-# 双模式 Prompt 模板（Phi-4 Mini 专用）
+# 双模式 Prompt 模板（预留：rectify_snippet 未来可重构为调用此模板）
+# 当前 app.py/rectify_snippet 使用内联 prompt 构建，以下模板暂未启用
 # ==========================================
 
 SUMMARY_SYSTEM_PROMPT = """你是一位贴心的隐私保护顾问，擅长将晦涩的法律条款"翻译"成普通人能听懂的大白话。

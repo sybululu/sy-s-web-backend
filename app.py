@@ -42,6 +42,19 @@ LLM_MODEL_ID = os.getenv("LLM_MODEL_ID", "microsoft/Phi-4-mini-instruct")
 # ==========================================
 # 导入 RAG 模块
 # ==========================================
+import sys as _sys
+from pathlib import Path as _Path
+
+# 确保 src/ 能被正确识别为包（兼容 HF Space 脚本模式）
+_project_root = str(_Path(__file__).resolve().parent)
+if _project_root not in _sys.path:
+    _sys.path.insert(0, _project_root)
+
+RAG_AVAILABLE = False
+legal_kb_loader: Optional[Any] = None
+vector_store: Optional[Any] = None
+retriever: Optional[Any] = None
+
 try:
     from src.loader import LegalKBLoader
     from src.store import VectorStore
@@ -50,8 +63,7 @@ try:
     RAG_AVAILABLE = True
     logger.info("RAG 模块加载成功")
 except ImportError as e:
-    logger.warning(f"RAG 模块加载失败: {e}")
-    RAG_AVAILABLE = False
+    logger.warning(f"RAG 模块加载失败: {e}，将使用静态配置降级")
 
 # ==========================================
 # 模型加载 (HuggingFace Hub)
@@ -59,9 +71,10 @@ except ImportError as e:
 print("正在从 HuggingFace Hub 加载模型，首次运行需要下载...")
 
 # 1. 加载 RoBERTa 风险分类模型（基础模型 + 微调 checkpoint）
+# 注意：CAPP-130 微调模型输出 11 类标签，通过 mapper.py 映射到 12 类违规类型
 tokenizer_roberta = AutoTokenizer.from_pretrained("hfl/chinese-roberta-wwm-ext")
 model_roberta = AutoModelForSequenceClassification.from_pretrained(
-    "hfl/chinese-roberta-wwm-ext", num_labels=12
+    "hfl/chinese-roberta-wwm-ext", num_labels=11
 )
 # 从 HF Hub 下载微调 checkpoint 并加载
 roberta_ckpt_path = hf_hub_download(
@@ -69,7 +82,20 @@ roberta_ckpt_path = hf_hub_download(
     filename="multi_classification_bertmoe.ckpt"
 )
 state_dict = torch.load(roberta_ckpt_path, map_location="cpu", weights_only=True)
-model_roberta.load_state_dict(state_dict, strict=False)
+
+# 清理 checkpoint 键名前缀（CAPP-130 微调权重带 "model." 前缀）
+cleaned_state_dict = {}
+for key, value in state_dict.items():
+    new_key = key.replace("model.", "")
+    cleaned_state_dict[new_key] = value
+
+# strict=True：确保所有键都正确匹配（清理后不应有遗漏）
+missing, unexpected = model_roberta.load_state_dict(cleaned_state_dict, strict=True)
+if missing:
+    logger.warning(f"RoBERTa 加载后仍有缺失键: {missing}")
+if unexpected:
+    logger.warning(f"RoBERTa 多余键（已忽略）: {unexpected}")
+
 model_roberta.eval()
 print("RoBERTa 分类模型加载完成")
 
@@ -103,11 +129,6 @@ if LLM_MODE == "api":
 # ==========================================
 # RAG 组件初始化
 # ==========================================
-# 使用 Any 类型注解，避免 RAG 模块导入失败时 NameError
-legal_kb_loader: Optional[Any] = None
-vector_store: Optional[Any] = None
-retriever: Optional[Any] = None
-
 def initialize_rag():
     """初始化 RAG 组件"""
     global legal_kb_loader, vector_store, retriever
@@ -126,8 +147,12 @@ def initialize_rag():
         retriever = Retriever(loader=legal_kb_loader, vector_store=vector_store)
         retriever.initialize()
         logger.info("RAG 组件初始化完成")
+    except FileNotFoundError:
+        # 知识库目录不存在（HF Space 无预置知识库），正常降级
+        logger.info("知识库目录不存在，RAG 功能降级为静态配置（部署后可后续上传知识库启用）")
     except Exception as e:
-        logger.error(f"RAG 初始化失败: {e}")
+        # FAISS/嵌入模型加载等意外错误
+        logger.error(f"RAG 初始化异常（非预期）: {type(e).__name__}: {e}")
         # 不阻断主程序继续运行
 
 # ==========================================
@@ -154,42 +179,13 @@ init_db()
 app.include_router(auth_router)
 
 # ==========================================
-# 合规指标体系与权重定义
+# 合规指标体系与权重定义（唯一权威数据源：violation_config.py）
 # ==========================================
-INDICATORS = {
-    "过度收集敏感数据": {"weight": 0.15, "legal_basis": "《个人信息保护法》第六条'最小必要'原则及第二十九条", "id": "I1"},
-    "未说明收集目的": {"weight": 0.12, "legal_basis": "《个人信息保护法》第十七条", "id": "I2"},
-    "未获得明示同意": {"weight": 0.15, "legal_basis": "《个人信息保护法》第十四条", "id": "I3"},
-    "收集范围超出服务需求": {"weight": 0.10, "legal_basis": "《个人信息保护法》第六条", "id": "I4"},
-    "未明确第三方共享范围": {"weight": 0.08, "legal_basis": "《个人信息保护法》第二十三条", "id": "I5"},
-    "未获得单独共享授权": {"weight": 0.12, "legal_basis": "《个人信息保护法》第二十三条", "id": "I6"},
-    "未明确共享数据用途": {"weight": 0.08, "legal_basis": "《个人信息保护法》第二十三条及GDPR第四十六条", "id": "I7"},
-    "未明确留存期限": {"weight": 0.05, "legal_basis": "《个人信息保护法》第十九条", "id": "I8"},
-    "未说明数据销毁机制": {"weight": 0.05, "legal_basis": "《个人信息保护法》第四十七条", "id": "I9"},
-    "未明确用户权利范围": {"weight": 0.05, "legal_basis": "《个人信息保护法》第四十四至四十八条", "id": "I10"},
-    "未提供便捷权利行使途径": {"weight": 0.03, "legal_basis": "《个人信息保护法》第五十条", "id": "I11"},
-    "未明确权利响应时限": {"weight": 0.02, "legal_basis": "《个人信息安全规范》GB/T 35273-2020", "id": "I12"}
-}
+from violation_config import INDICATORS, ID_TO_INDICATOR, ID_TO_HINT
+from src.mapper import map_to_12_classes
 
-# 创建 ID 到指标名称的映射
-ID_TO_INDICATOR = {v["id"]: k for k, v in INDICATORS.items()}
+# 创建快捷访问列表（保持向后兼容）
 INDICATOR_KEYS = list(INDICATORS.keys())
-
-# 违规类型整改提示语（与 INDICATORS 一一对应，按 ID 索引）
-VIOLATION_HINTS = {
-    "I1": "【重要】涉及收集个人信息，必须遵守最小必要原则，只能收集与服务直接相关的个人信息，禁止收集与服务无关的敏感信息。",
-    "I2": "【重要】必须明确说明每项个人信息收集的具体目的和用途，不能使用模糊表述。",
-    "I3": "【重要】涉及处理个人信息必须获得用户明确、知情、自愿的同意，不能捆绑授权。",
-    "I4": "【重要】收集范围不得超过实现处理目的的最小必要范围。",
-    "I5": "【重要】向第三方共享时必须明确说明接收方类型、共享目的、数据类型，禁止无限制共享。",
-    "I6": "【重要】向第三方提供个人信息必须单独取得用户明示同意。",
-    "I7": "【重要】必须明确说明第三方使用数据的目的和范围。",
-    "I8": "【重要】必须明确数据存储期限，期限届满应予以删除或匿名化。",
-    "I9": "【重要】必须说明数据销毁机制，承诺在约定保存期限届满后主动删除或匿名化处理。",
-    "I10": "【重要】必须明确列举用户享有的各项权利及行使方式。",
-    "I11": "【重要】必须提供便捷的渠道供用户行使权利，渠道必须易于发现和操作。",
-    "I12": "【重要】必须明确权利响应时限，承诺在法定期限内处理用户请求。",
-}
 
 # ==========================================
 # Pydantic 数据模型定义 (Schema)
@@ -236,15 +232,39 @@ def split_into_sentences(text: str) -> List[str]:
     return [s.strip() for s in sentences if len(s.strip()) > 5]
 
 def roberta_predict(sentence: str) -> Dict[str, float]:
+    """
+    RoBERTa 预测：11 类模型输出 → 通过 mapper 映射到 12 类违规类型
+
+    返回格式: {violation_id: probability}
+    例如: {"I1": 0.82, "I4": 0.82}  (11类第0类"数据收集"映射到 I1+I4)
+    """
     inputs = tokenizer_roberta(sentence, return_tensors="pt", truncation=True, max_length=512)
     with torch.no_grad():
         outputs = model_roberta(**inputs)
-        probs = torch.sigmoid(outputs.logits).squeeze().tolist()
-    
+        # 11 类原始 logits（用于计算置信度差值）
+        logits = outputs.logits.squeeze()
+        # 11 类 sigmoid 概率
+        probs = torch.sigmoid(logits).tolist()
+
     if not isinstance(probs, list):
         probs = [probs]
-        
-    return {INDICATOR_KEYS[i]: probs[i] for i in range(min(len(probs), len(INDICATOR_KEYS)))}
+
+    # 计算置信度：logits 最高值与次高值的差值（差越大越确信）
+    if isinstance(logits, torch.Tensor) and logits.dim() == 1:
+        sorted_logits, _ = torch.sort(logits, descending=True)
+        confidence = (sorted_logits[0] - sorted_logits[1]).item() if len(sorted_logits) > 1 else sorted_logits[0].item()
+    else:
+        confidence = None
+
+    # 11 类 → 12 类违规 ID 多标签映射（置信度 + 概率双重约束）
+    detected_ids = map_to_12_classes(probs, confidence=confidence)
+
+    if not detected_ids:
+        return {}
+
+    # 取最高概率作为映射结果的置信度
+    max_prob = max(probs) if probs else 0.0
+    return {vid: max_prob for vid in detected_ids}
 
 def get_legal_basis_from_rag(violation_type: str, context: Optional[str] = None) -> str:
     """
@@ -368,28 +388,35 @@ async def analyze(
     db: Session = Depends(get_db)
 ):
     sentences = split_into_sentences(request.text)
-    violation_flags = {key: 0 for key in INDICATOR_KEYS}
+    # violation_flags 改为按 violation_id（如 "I1", "I2"）标记，每种违规只扣一次
+    violation_flags = {info["id"]: 0 for info in INDICATORS.values()}
     violations_list = []
 
     for sentence in sentences:
+        # roberta_predict 现在返回 {violation_id: probability} 格式
+        # 例如: {"I1": 0.82, "I4": 0.82} （11类第0类"数据收集"映射到 I1+I4）
         probs = roberta_predict(sentence)
-        for indicator, prob in probs.items():
+        for violation_id, prob in probs.items():
             if prob > 0.5:
-                violation_flags[indicator] = 1
-                if not any(v["indicator"] == indicator for v in violations_list):
-                    # 获取违规类型ID
-                    violation_id = INDICATORS[indicator]["id"]
+                violation_flags[violation_id] = 1
+                if not any(v["violation_id"] == violation_id for v in violations_list):
+                    # 从 ID 反查指标名称
+                    indicator_name = ID_TO_INDICATOR.get(violation_id, "")
                     # 使用 RAG 获取法律依据
                     legal_basis = get_legal_basis_from_rag(violation_id, context=sentence)
-                    
+
                     violations_list.append({
-                        "indicator": indicator,
+                        "indicator": indicator_name,
                         "violation_id": violation_id,
                         "snippet": sentence,
                         "legal_basis": legal_basis
                     })
 
-    penalty = sum(INDICATORS[ind]["weight"] * vi for ind, vi in violation_flags.items())
+    # violation_flags 现在以 violation_id (如 "I1") 为 key
+    penalty = sum(
+        INDICATORS[ID_TO_INDICATOR[v_id]]["weight"] * flag
+        for v_id, flag in violation_flags.items()
+    )
     total_score = round(max(0.0, 100.0 - (penalty * 100.0)), 1)
 
     if total_score >= SCORE_THRESHOLD_LOW_RISK:
@@ -432,8 +459,8 @@ async def rectify_snippet(
     if not legal_context or legal_context == "《个人信息保护法》":
         legal_context = request.legal_basis or legal_context
 
-    # 获取整改提示语（模块级常量）
-    violation_hint = VIOLATION_HINTS.get(request.violation_type, "【重要】必须符合《个人信息保护法》相关要求。")
+    # 获取整改提示语（从 violation_config 统一获取）
+    violation_hint = ID_TO_HINT.get(request.violation_type, "【重要】必须符合《个人信息保护法》相关要求。")
 
     # 根据 mode 构建差异化 prompt + chat messages
     if request.mode == "summary":
@@ -602,7 +629,7 @@ async def export_report(
         report += f"\n{i}. {v.get('indicator', '未知类别')} (ID: {v.get('violation_id', 'N/A')})\n"
         report += f"   原文：{v.get('snippet', '未知')}\n"
         report += f"   依据：{v.get('legal_basis', '未知')}\n"
-        suggested = v.get('suggestedText', '')
+        suggested = v.get('suggested_text', '')
         if suggested:
             report += f"   整改建议：{suggested}\n"
         reason = v.get('reason', '')
@@ -617,4 +644,4 @@ async def export_report(
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=7860)

@@ -7,7 +7,7 @@ from typing import List, Optional, Dict
 
 from src.loader import LegalKBLoader
 from src.store import VectorStore
-from ..models import Article, SearchResult, RetrievedChunk
+from src.models import Article, SearchResult, RetrievedChunk
 
 logger = logging.getLogger(__name__)
 
