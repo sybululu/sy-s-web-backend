@@ -48,9 +48,56 @@ print("正在加载真实模型，这可能需要几分钟...")
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
 HF_REPO_ID = os.environ.get("HF_REPO_ID", "sybululu/bert-moe")
 
-# 1. 加载风险分类模型
+# GGUF 模型配置 (Phi-4 Mini)
+GGUF_MODEL_PATH = os.environ.get("GGUF_MODEL_PATH", "./models/phi-4-mini-instruct-Q4_K_M.gguf")
+GGUF_N_CTX = int(os.environ.get("GGUF_N_CTX", "2048"))
+GGUF_N_THREADS = int(os.environ.get("GGUF_N_THREADS", "2"))
+
+# Phi-4 Mini LLM 实例
+llm_phi = None
+
+# 1. 加载 Phi-4 Mini GGUF 模型
 try:
-    # 优先使用 HuggingFace Hub 上的微调模型
+    from llama_cpp import Llama
+    # 检查模型文件是否存在
+    if os.path.exists(GGUF_MODEL_PATH):
+        llm_phi = Llama(
+            model_path=GGUF_MODEL_PATH,
+            n_ctx=GGUF_N_CTX,
+            n_threads=GGUF_N_THREADS,
+            verbose=False
+        )
+        print(f"✓ Phi-4 Mini GGUF 模型加载成功: {GGUF_MODEL_PATH}")
+    else:
+        # 尝试从 HuggingFace Hub 下载
+        logger.info("正在从 HuggingFace Hub 下载 Phi-4 Mini GGUF 模型...")
+        from huggingface_hub import hf_hub_download
+        try:
+            downloaded_path = hf_hub_download(
+                repo_id="unsloth/phi-4-mini-instruct-GGUF",
+                filename="Phi-4-mini-instruct-Q4_K_M.gguf",
+                token=HF_TOKEN or None,
+                local_dir="./models"
+            )
+            llm_phi = Llama(
+                model_path=downloaded_path,
+                n_ctx=GGUF_N_CTX,
+                n_threads=GGUF_N_THREADS,
+                verbose=False
+            )
+            print(f"✓ Phi-4 Mini GGUF 模型下载并加载成功")
+        except Exception as e:
+            logger.warning(f"下载 GGUF 模型失败: {e}")
+            print("⚠️ 未找到 Phi-4 Mini 模型，将使用降级方案")
+except ImportError:
+    logger.warning("llama-cpp-python 未安装，无法使用 Phi-4 Mini")
+    print("⚠️ llama-cpp-python 未安装，将使用降级方案")
+except Exception as e:
+    logger.warning(f"加载 Phi-4 Mini GGUF 模型失败: {e}")
+    print(f"⚠️ Phi-4 Mini 模型加载失败: {e}")
+
+# 2. 加载 RoBERTa 风险分类模型
+try:
     tokenizer_roberta = AutoTokenizer.from_pretrained("hfl/chinese-roberta-wwm-ext")
     model_roberta = AutoModelForSequenceClassification.from_pretrained(
         HF_REPO_ID, 
@@ -62,7 +109,6 @@ try:
     print(f"✓ 分类模型加载成功: {HF_REPO_ID}")
 except Exception as e:
     logger.warning(f"无法从 {HF_REPO_ID} 加载分类模型: {e}")
-    logger.warning("使用基础 RoBERTa 模型作为降级方案")
     try:
         model_roberta = AutoModelForSequenceClassification.from_pretrained(
             "hfl/chinese-roberta-wwm-ext", 
@@ -73,28 +119,17 @@ except Exception as e:
         logger.error(f"降级模型加载也失败: {e2}")
         model_roberta = None
 
-# 2. 加载 mT5 整改生成模型
+# mT5 作为降级方案（当 Phi-4 不可用时）
+model_mt5 = None
+tokenizer_mt5 = None
 try:
-    # 尝试从 HuggingFace Hub 加载微调模型
-    model_mt5 = MT5ForConditionalGeneration.from_pretrained(
-        HF_REPO_ID,
-        token=HF_TOKEN or None,
-        ignore_mismatched_sizes=True
-    )
-    tokenizer_mt5 = AutoTokenizer.from_pretrained("google/mt5-base")
-    print(f"✓ 生成模型加载成功")
-except Exception as e:
-    logger.warning(f"无法加载微调生成模型: {e}")
-    logger.warning("使用基础 mT5 模型")
-    try:
+    if llm_phi is None:  # 只有在没有 Phi-4 时才加载 mT5
         tokenizer_mt5 = AutoTokenizer.from_pretrained("google/mt5-base")
         model_mt5 = MT5ForConditionalGeneration.from_pretrained("google/mt5-base")
         model_mt5.eval()
-        print("✓ 基础 mT5 模型加载成功")
-    except Exception as e2:
-        logger.error(f"基础 mT5 模型加载也失败: {e2}")
-        model_mt5 = None
-        tokenizer_mt5 = None
+        print("✓ 降级 mT5 模型加载成功")
+except Exception as e:
+    logger.warning(f"mT5 降级模型加载失败: {e}")
 
 print("模型加载完成！")
 
@@ -192,6 +227,7 @@ class AnalyzeResponse(BaseModel):
 class RectifyRequest(BaseModel):
     original_snippet: str
     violation_type: str
+    legal_basis: Optional[str] = None  # 可选的法律依据，用于前端传递
 
 class UrlRequest(BaseModel):
     url: str
@@ -399,67 +435,164 @@ async def rectify_snippet(
     request: RectifyRequest,
     current_user: User = Depends(get_current_user)
 ):
-    """整改违规条款"""
-    # 使用 RAG 检索相关法律条款
-    legal_context = get_legal_basis_from_rag(request.violation_type, context=request.original_snippet)
+    """整改违规条款 - 使用 Phi-4 Mini 生成合规改写"""
     
-    # 构建强化版 prompt，强制最小必要原则
+    # 获取违规类型提示
     violation_type_hints = {
-        "I1": "【重要】涉及收集个人信息，必须遵守最小必要原则，只能收集与服务直接相关的个人信息，禁止收集与服务无关的敏感信息。",
-        "I2": "【重要】必须明确说明每项个人信息收集的具体目的和用途，不能使用模糊表述。",
-        "I3": "【重要】涉及处理个人信息必须获得用户明确、知情、自愿的同意，不能捆绑授权。",
-        "I4": "【重要】收集范围不得超过实现处理目的的最小必要范围。",
-        "I5": "【重要】向第三方共享时必须明确说明接收方类型、共享目的、数据类型，禁止无限制共享。",
-        "I6": "【重要】向第三方提供个人信息必须单独取得用户明示同意。",
-        "I7": "【重要】必须明确说明第三方使用数据的目的和范围。",
-        "I8": "【重要】必须明确数据存储期限，期限届满应予以删除或匿名化。",
-        "I9": "【重要】必须说明数据销毁机制，承诺在约定保存期限届满后主动删除或匿名化处理。",
-        "I10": "【重要】必须明确列举用户享有的各项权利及行使方式。",
-        "I11": "【重要】必须提供便捷的渠道供用户行使权利，渠道必须易于发现和操作。",
-        "I12": "【重要】必须明确权利响应时限，承诺在法定期限内处理用户请求。",
+        "I1": "涉及收集个人信息，必须遵守最小必要原则，只能收集与服务直接相关的个人信息，禁止收集与服务无关的敏感信息。",
+        "I2": "必须明确说明每项个人信息收集的具体目的和用途，不能使用模糊表述。",
+        "I3": "涉及处理个人信息必须获得用户明确、知情、自愿的同意，不能捆绑授权。",
+        "I4": "收集范围不得超过实现处理目的的最小必要范围。",
+        "I5": "向第三方共享时必须明确说明接收方类型、共享目的、数据类型，禁止无限制共享。",
+        "I6": "向第三方提供个人信息必须单独取得用户明示同意。",
+        "I7": "必须明确说明第三方使用数据的目的和范围。",
+        "I8": "必须明确数据存储期限，期限届满应予以删除或匿名化。",
+        "I9": "必须说明数据销毁机制，承诺在约定保存期限届满后主动删除或匿名化处理。",
+        "I10": "必须明确列举用户享有的各项权利及行使方式。",
+        "I11": "必须提供便捷的渠道供用户行使权利，渠道必须易于发现和操作。",
+        "I12": "必须明确权利响应时限，承诺在法定期限内处理用户请求。",
     }
     
-    violation_hint = violation_type_hints.get(request.violation_type, "【重要】必须符合《个人信息保护法》相关要求。")
+    violation_hint = violation_type_hints.get(request.violation_type, "必须符合《个人信息保护法》相关要求。")
     
-    # 强化版 prompt
-    prompt = f"""请将以下隐私政策条款改写为符合法律规范的版本。
-
-【法律依据】
-{legal_context}
-
-【整改要求】
-{violation_hint}
-
-【核心原则】
-1. 最小必要原则：只收集、处理实现目的所需的最小个人信息
-2. 目的明确原则：必须明确说明收集目的，不能模糊表述
-3. 知情同意原则：必须让用户充分知情并获得明确同意
-4. 权利保障原则：必须保障用户的查阅、复制、更正、删除等权利
-
-【原条款】
-{request.original_snippet}
-
-【合规改写】
-"""
+    # 获取 RAG 法律依据
+    legal_context = request.legal_basis if request.legal_basis else get_legal_basis_from_rag(request.violation_type, context=request.original_snippet)
     
-    # 使用 mT5 生成整改建议
-    if model_mt5 is None or tokenizer_mt5 is None:
-        # 模型未加载时返回基于规则的通用建议
-        suggested_text = f"建议修改条款内容，确保符合《个人信息保护法》等隐私法规的合规要求。"
-    else:
+    # 提取法律关键词用于增强 prompt
+    legal_keywords = extract_legal_keywords(legal_context)
+    
+    suggested_text = ""
+    
+    # 优先使用 Phi-4 Mini GGUF
+    if llm_phi is not None:
         try:
-            inputs = tokenizer_mt5(prompt, return_tensors="pt", truncation=True, max_length=512)
+            # Phi-4 Mini Instruct 格式
+            prompt = f"""<|system|>
+你是一位资深的隐私合规专家。你需要根据提供的[法律依据]和[整改要求]，将[原句]重写为符合法律规范的表述。
+重写时必须：
+1. 遵循最小必要原则
+2. 明确说明处理目的
+3. 保障用户知情权和选择权
+4. 语言通俗易懂，避免法律术语堆砌
+<|user|>
+[法律依据摘要]：{legal_keywords}
+[整改要求]：{violation_hint}
+[原句]：{request.original_snippet}
+<|assistant|>
+<|text|>"""
+            
+            response = llm_phi(
+                prompt,
+                max_tokens=512,
+                stop=["<|endoftext|>", "</s>", "<|user|>"],
+                repeat_penalty=2.2,
+                temperature=0.7
+            )
+            
+            # 提取生成的文本
+            raw_output = response['choices'][0]['text'].strip()
+            # 清理输出，去除 <|text|> 等标签
+            suggested_text = clean_phi_output(raw_output)
+            
+            logger.info(f"Phi-4 Mini 生成成功: {request.violation_type}")
+        except Exception as e:
+            logger.error(f"Phi-4 Mini 生成失败: {e}")
+            suggested_text = ""
+    
+    # 降级方案：使用 mT5
+    if not suggested_text and model_mt5 is not None and tokenizer_mt5 is not None:
+        try:
+            mt5_prompt = f"""请将以下隐私政策条款改写为符合法律规范的版本。
+【整改要求】{violation_hint}
+【原条款】{request.original_snippet}
+【合规改写】"""
+            
+            inputs = tokenizer_mt5(mt5_prompt, return_tensors="pt", truncation=True, max_length=512)
             with torch.no_grad():
                 outputs = model_mt5.generate(**inputs, max_length=256, temperature=0.3, do_sample=True)
             suggested_text = tokenizer_mt5.decode(outputs[0], skip_special_tokens=True)
+            logger.info(f"mT5 降级生成成功")
         except Exception as e:
             logger.error(f"mT5 生成失败: {e}")
-            suggested_text = f"建议修改条款内容，确保符合相关隐私法规的合规要求。"
+            suggested_text = ""
+    
+    # 最终降级：基于规则的通用建议
+    if not suggested_text:
+        suggested_text = generate_rule_based_suggestion(request.original_snippet, request.violation_type, violation_hint)
     
     return {
         "suggested_text": suggested_text,
         "legal_basis": legal_context
     }
+
+
+def extract_legal_keywords(legal_context: str) -> str:
+    """从法律依据中提取关键要求"""
+    if not legal_context:
+        return "遵循《个人信息保护法》相关规定"
+    
+    # 提取法条编号
+    import re
+    articles = re.findall(r'第[零一二三四五六七八九十百]+[条章节款]', legal_context)
+    law_names = re.findall(r'《[^》]+》', legal_context)
+    
+    # 提取关键动词和要求
+    keywords = []
+    if "同意" in legal_context:
+        keywords.append("获得明确同意")
+    if "告知" in legal_context:
+        keywords.append("充分告知")
+    if "最小" in legal_context or "必要" in legal_context:
+        keywords.append("最小必要原则")
+    if "目的" in legal_context:
+        keywords.append("明确处理目的")
+    if "删除" in legal_context:
+        keywords.append("数据删除机制")
+    if "第三方" in legal_context:
+        keywords.append("第三方共享限制")
+    
+    result = ""
+    if law_names:
+        result += "、".join(set(law_names)) + "规定："
+    if articles:
+        result += "、".join(articles[:3]) + "。"
+    if keywords:
+        result += "核心要求：" + "、".join(keywords[:4])
+    
+    return result or "遵循个人信息保护相关法律法规"
+
+
+def clean_phi_output(raw_output: str) -> str:
+    """清理 Phi-4 输出的特殊标签"""
+    import re
+    # 移除 <|text|>、<|thought|> 等标签
+    cleaned = re.sub(r'<\|[^|]+\|>', '', raw_output)
+    # 移除多余的空白
+    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+    cleaned = cleaned.strip()
+    return cleaned if cleaned else ""
+
+
+def generate_rule_based_suggestion(original_text: str, violation_type: str, violation_hint: str) -> str:
+    """基于规则的降级建议生成"""
+    # 通用改写模板
+    templates = {
+        "I1": f"为了向您提供[具体服务名称]，我们仅收集实现该服务所必需的个人信息，包括[具体信息类型]。我们不会收集与服务无关的信息。",
+        "I2": f"我们收集您的[信息类型]用于[具体明确的目的]，包括[列举用途]。",
+        "I3": f"在收集您的个人信息前，我们将明确告知您收集的目的、方式和范围，并获得您的同意。您有权拒绝或撤回同意。",
+        "I4": f"我们仅收集实现服务目的所必需的最少个人信息，不收集与服务无关的信息。",
+        "I5": f"我们仅在以下情况下与第三方共享您的信息：①取得您的单独同意；②实现服务所必需；③法律法规要求。共享时我们会明确告知接收方类型和目的。",
+        "I6": f"向第三方提供您的个人信息前，我们会单独征求您的明示同意。",
+        "I7": f"第三方使用您的信息时，必须遵守本隐私政策的约定，仅用于约定的目的和范围。",
+        "I8": f"我们将在实现处理目的所必需的最短时间内保存您的个人信息，保存期限届满后将予以删除或匿名化处理。",
+        "I9": f"当保存期限届满或您行使删除权时，我们将按照法律法规要求的方式删除或匿名化您的个人信息。",
+        "I10": f"您依法享有查阅、复制、更正、删除您的个人信息的权利，以及数据可携带权等。",
+        "I11": f"您可以通过[具体渠道，如设置页面、联系邮箱]便捷地行使您的个人信息相关权利。",
+        "I12": f"我们将在收到您的权利请求后[法定期限/承诺期限]内进行处理和答复。",
+    }
+    
+    return templates.get(violation_type, f"建议修改为更加明确、具体且符合《个人信息保护法》等相关法规要求的表述。")
+
 
 @app.post("/api/v1/upload")
 async def upload_file(
