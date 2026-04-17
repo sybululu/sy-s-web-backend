@@ -8,10 +8,10 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set
 from dataclasses import dataclass, field
 
-from src.models import (
-    Article, 
-    LawDocument, 
-    ViolationMapping, 
+from ..models import (
+    Article,
+    LawDocument,
+    ViolationMapping,
     ViolationMappingConfig,
     KnowledgeBaseMeta,
     LawMeta,
@@ -173,11 +173,6 @@ class LegalKBLoader:
                 if vt not in self._knowledge.violation_to_articles:
                     self._knowledge.violation_to_articles[vt] = []
                 self._knowledge.violation_to_articles[vt].append(article_id)
-        
-        # 调试：打印每个违规类型的条款数量
-        logger.info(f"违规索引建立完成: {len(self._knowledge.violation_to_articles)} 种违规类型")
-        for vt, arts in self._knowledge.violation_to_articles.items():
-            logger.info(f"  {vt}: {len(arts)} 条")
     
     # ==================== 公共接口 ====================
     

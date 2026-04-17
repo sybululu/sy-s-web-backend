@@ -66,36 +66,7 @@ def get_db():
         db.close()
 
 # ==========================================
-# Pydantic API 模型
-# ==========================================
-
-class AnalyzeRequest(BaseModel):
-    text: str = Field(..., min_length=10, max_length=50000)
-    source_type: Optional[str] = "text"
-    
-    @field_validator('text')
-    def validate_text(cls, v):
-        if not v.strip():
-            raise ValueError('文本不能为空')
-        return v
-
-class AnalyzeResponse(BaseModel):
-    id: str
-    name: str
-    score: float
-    risk_level: str
-    violations: List[dict]
-
-class RectifyRequest(BaseModel):
-    original_snippet: str
-    violation_type: str
-    legal_basis: Optional[str] = None
-
-class UrlRequest(BaseModel):
-    url: str
-
-# ==========================================
-# 知识库模型 (来自 src.models)
+# Pydantic 知识库模型（API Schema 仅在 app.py 中定义，避免重复）
 # ==========================================
 
 class RiskLevel(str, Enum):
@@ -126,6 +97,7 @@ class Article(BaseModel):
     annotations: Optional[ArticleAnnotation] = Field(None, description="条款注释")
     
     @field_validator('violation_types')
+    @classmethod
     def validate_violation_types(cls, v):
         """验证违规类型格式"""
         for vt in v:

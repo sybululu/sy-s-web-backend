@@ -156,4 +156,135 @@ __all__ = [
     "INDICATORS", "ID_TO_INDICATOR", "ID_TO_HINT", "ID_TO_RISK_LEVEL",
     "INDICATOR_KEYS", "get_risk_level", "get_hint", "get_legal_basis",
     "to_frontend_list",
+    # 双模式 Prompt
+    "SUMMARY_SYSTEM_PROMPT", "REWRITE_SYSTEM_PROMPT",
+    "build_summary_user_prompt", "build_rewrite_user_prompt",
 ]
+
+
+# ==========================================
+# 双模式 Prompt 模板（Phi-4 Mini 专用）
+# ==========================================
+
+SUMMARY_SYSTEM_PROMPT = """你是一位贴心的隐私保护顾问，擅长将晦涩的法律条款"翻译"成普通人能听懂的大白话。
+
+你的任务是：帮助普通用户理解隐私政策条款中隐藏的风险，用最直白的语言告诉用户：
+1. 这段话到底在说什么（翻译成人话）
+2. 对用户有什么潜在风险或影响
+3. 用户应该注意什么、可以怎么做
+
+写作要求：
+- 严禁使用任何法律术语（如"去标识化""最小必要原则""明示同意""信息控制者"等）
+- 用生活化的比喻和日常语言，像给朋友解释一样
+- 控制在 3-5 句话以内，每句不超过 20 个字
+- 语气友好但不危言耸听，客观陈述事实
+- 最后给出一句简短的行动建议"""
+
+REWRITE_SYSTEM_PROMPT = """你是一位资深的隐私合规专家，精通《个人信息保护法》《数据安全法》《网络安全法》及 GB/T 35273 等法规标准。
+
+你的任务是：根据提供的[法律依据]和[整改要求]，将[原句]重写为符合中国法律法规的合规文本。
+
+重写必须满足以下硬性约束：
+1. **最小必要原则**：只收集/使用实现目的所必需的最少信息
+2. **目的明确**：每项数据处理活动必须有清晰、具体的合法目的
+3. **知情同意**：涉及敏感个人信息须取得单独明示同意
+4. **用户权利**：明确告知用户享有查阅、复制、更正、删除等权利
+5. **第三方规范**：共享/委托/跨境须说明接收方类型、目的、方式
+6. **留存期限**：明确存储期限及届满后的处理方式
+
+语言风格：
+- 使用标准的隐私政策表述范式（如"仅为...之目的""我们将在...范围内"）
+- 可直接替换到 App 隐私政策的对应位置
+- 避免模糊措辞（如"可能""必要时"），改用确定性表述"""
+
+
+def build_summary_user_prompt(
+    original_text: str,
+    violation_name: str,
+    violation_hint: str,
+    legal_context: str = ""
+) -> str:
+    """
+    构建摘要模式的 user prompt
+    
+    RAG 法律依据作为"背景知识"辅助理解，不直接暴露给用户
+    """
+    # 从法律依据中提炼通俗化的风险点
+    risk_translation = _translate_legal_to_plain(legal_context, violation_hint)
+    
+    return f"""【原始条款】
+{original_text}
+
+【问题类型】
+{violation_name}
+
+【这条条款的问题】
+{risk_translation}
+
+请用大白话告诉用户这段话意味着什么，以及用户需要注意什么。"""
+
+
+def build_rewrite_user_prompt(
+    original_text: str,
+    violation_name: str,
+    violation_hint: str,
+    legal_keywords: str
+) -> str:
+    """
+    构建专业改写模式的 user prompt
+    
+    RAG 法律依据作为"合规标准"强力注入
+    """
+    return f"""【法律依据摘要】
+{legal_keywords}
+
+【整改要求】
+{violation_hint}
+
+【违规类型】
+{violation_name}
+
+【原句】
+{original_text}
+
+请根据以上要求，输出可直接使用的合规改写文本。只输出改写后的文本，不要加任何前缀或解释。"""
+
+
+def _translate_legal_to_plain(legal_context: str, hint: str) -> str:
+    """
+    将法律术语转化为通俗问题描述（供摘要模式使用）
+    
+    这是摘要模式的核心：把 "未获得明示同意" 翻译为
+    "App 在你没真正同意的情况下就收集了你的信息"
+    """
+    # 常见法律术语 → 大白话映射表
+    term_map = {
+        "最小必要": "App 收集的信息可能比它实际需要的多得多",
+        "明示同意": "App 在你没有真正点头同意的情况下就做了这件事",
+        "单独同意": "App 把各种权限打包在一起让你一次性同意，没给你逐项选择的机会",
+        "告知": "App 没有清楚地告诉你它要用你的信息做什么",
+        "第三方": "App 可能会把你的信息交给其他公司，但没告诉你给了谁",
+        "共享": "你的信息可能被 App 传到了你不知道的地方",
+        "匿名化": "App 说会'脱敏'你的信息，但没有说清楚具体怎么做的",
+        "删除": "你想让 App 删掉你的信息时，可能找不到入口或者删不掉",
+        "留存期限": "App 会一直保存你的信息，但没告诉你保存多久",
+        "销毁": "App 没有承诺什么时候会彻底清除你的信息",
+        "用户权利": "法律规定你有很多权利（比如查看、删除自己的信息），但 App 没告诉你",
+        "响应时限": "你向 App 提出请求后，它可能拖很久都不处理",
+        "跨境": "你的信息可能被传到了国外，但你并不知情",
+        "敏感信息": "App 可能收集了你的私密信息（如位置、通讯录），这需要特别小心的保护",
+        "目的限制": "App 说收集信息是为了 A，实际却拿去做了 B",
+        "自动化决策": "App 用算法自动判断关于你的事情，但这些判断可能是错的或不公平的",
+    }
+    
+    result = hint
+    for legal_term, plain in term_map.items():
+        if legal_term in hint or legal_term in legal_context:
+            result = plain
+            break
+    
+    # 如果 hint 本身已经够通俗就直接用
+    if len(result) > len(hint) * 1.5:
+        result = hint
+    
+    return result

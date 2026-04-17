@@ -2,7 +2,6 @@
 隐私政策合规审查 API
 整合了 RAG 架构的法律知识库检索
 """
-import os
 import json
 import re
 import logging
@@ -12,27 +11,17 @@ from typing import List, Optional, Dict
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, JSONResponse
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 import torch
-import torch.nn as nn
-from transformers import (
-    BertTokenizer, BertModel,
-    AutoTokenizer, MT5ForConditionalGeneration
-)
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+
+from llama_cpp import Llama
 from huggingface_hub import hf_hub_download
 
-from models import (
-    User, Project, get_db, init_db, Article, RetrievedChunk,
-    AnalyzeRequest, AnalyzeResponse, RectifyRequest, UrlRequest
-)
+from models import User, Project, get_db, init_db, Article, RetrievedChunk
 from auth import router as auth_router, get_current_user
-from src.mapper import ID_MAPPING, map_to_12_classes, VIOLATION_NAMES
-from violation_config import (
-    INDICATORS, ID_TO_INDICATOR, ID_TO_HINT, ID_TO_RISK_LEVEL,
-    INDICATOR_KEYS, get_risk_level as _get_risk_level,
-)
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -53,92 +42,37 @@ except ImportError as e:
     RAG_AVAILABLE = False
 
 # ==========================================
-# 模型加载 (HuggingFace Transformers)
+# 模型加载 (HuggingFace Hub)
 # ==========================================
-logger.info("正在加载模型...")
+print("正在从 HuggingFace Hub 加载模型，首次运行需要下载...")
 
-# HuggingFace Hub 配置
-HF_TOKEN = os.environ.get("HF_TOKEN", "")
-HF_REPO_ID = os.environ.get("HF_REPO_ID", "sybululu/bert-moe")
-
-# HuggingFace Inference API 配置 (Phi-4 Mini)
-# 设置 USE_HF_API=1 启用 API 调用模式
-USE_HF_API = os.environ.get("USE_HF_API", "0") == "1"
-HF_INFERENCE_MODEL = os.environ.get("HF_INFERENCE_MODEL", "microsoft/phi-4-mini-instruct")
-
-# 1. 加载 RoBERTa 风险分类模型 (sybululu/bert-moe)
-# 模型是自定义架构，需要重建模型类后加载权重
-
-tokenizer_roberta = BertTokenizer.from_pretrained("hfl/chinese-roberta-wwm-ext")
-
-# 重建与训练代码一致的模型架构
-class BertClassifier(nn.Module):
-    def __init__(self, config):
-        super(BertClassifier, self).__init__()
-        self.bert = BertModel.from_pretrained("hfl/chinese-roberta-wwm-ext")
-        for param in self.bert.parameters():
-            param.requires_grad = True
-        self.fc = nn.Linear(config.hidden_size, config.num_labels)
-    
-    def forward(self, x, attention_mask=None):
-        _, pooled = self.bert(x, attention_mask=attention_mask)
-        return self.fc(pooled)
-
-# 创建配置和模型
-class Config:
-    hidden_size = 768
-    num_labels = 12  # 12 类违规
-
-config = Config()
-model_roberta = BertClassifier(config)
-
-# 加载预训练权重
-try:
-    model_file = hf_hub_download(
-        repo_id=HF_REPO_ID,
-        filename="multi_classification_bertmoe.ckpt",
-        token=HF_TOKEN or None
-    )
-    checkpoint = torch.load(model_file, map_location="cpu", weights_only=False)
-    
-    # 处理 checkpoint 结构
-    if "state_dict" in checkpoint:
-        state_dict = checkpoint["state_dict"]
-    elif "model_state_dict" in checkpoint:
-        state_dict = checkpoint["model_state_dict"]
-    else:
-        state_dict = checkpoint
-    
-    # 清理键名前缀 (model.xxx -> xxx)
-    cleaned_state_dict = {}
-    for k, v in state_dict.items():
-        new_key = k.replace("model.", "").replace("bert.", "")
-        cleaned_state_dict[new_key] = v
-    
-    model_roberta.load_state_dict(cleaned_state_dict, strict=False)
-    logger.info("分类模型加载成功: %s", HF_REPO_ID)
-except Exception as e:
-    raise RuntimeError(f"无法加载模型权重: {e}")
-
+# 1. 加载 RoBERTa 风险分类模型（基础模型 + 微调 checkpoint）
+tokenizer_roberta = AutoTokenizer.from_pretrained("hfl/chinese-roberta-wwm-ext")
+model_roberta = AutoModelForSequenceClassification.from_pretrained(
+    "hfl/chinese-roberta-wwm-ext", num_labels=12
+)
+# 从 HF Hub 下载微调 checkpoint 并加载
+roberta_ckpt_path = hf_hub_download(
+    repo_id="sybululu/bert-moe",
+    filename="multi_classification_bertmoe.ckpt"
+)
+state_dict = torch.load(roberta_ckpt_path, map_location="cpu", weights_only=True)
+model_roberta.load_state_dict(state_dict, strict=False)
 model_roberta.eval()
-logger.info("模型就绪")
+print("RoBERTa 分类模型加载完成")
 
-# mT5 降级模型 - 延迟加载，只有在 API 失败时才加载
-_model_mt5_cache = {"model": None, "tokenizer": None}
-
-def get_fallback_model():
-    """延迟加载 mT5 降级模型，避免占用内存"""
-    if _model_mt5_cache["model"] is None:
-        try:
-            _model_mt5_cache["tokenizer"] = AutoTokenizer.from_pretrained("google/mt5-base")
-            _model_mt5_cache["model"] = MT5ForConditionalGeneration.from_pretrained("google/mt5-base")
-            _model_mt5_cache["model"].eval()
-            logger.info("mT5 降级模型加载成功（延迟加载）")
-        except Exception as e:
-            logger.warning(f"mT5 模型加载失败: {e}")
-            return None, None
-    
-    return _model_mt5_cache["model"], _model_mt5_cache["tokenizer"]
+# 2. 加载 Phi-4 Mini 整改生成模型 (Q6_K GGUF，从 HF Hub 下载)
+phi4_gguf_path = hf_hub_download(
+    repo_id="tensorblock/Phi-4-mini-instruct-GGUF",
+    filename="Phi-4-mini-instruct-Q6_K.gguf"
+)
+llm = Llama(
+    model_path=phi4_gguf_path,
+    n_ctx=2048,
+    n_threads=4,
+    verbose=False
+)
+print("Phi-4 Mini 整改生成模型加载完成")
 
 # ==========================================
 # RAG 组件初始化
@@ -174,10 +108,13 @@ def initialize_rag():
 # ==========================================
 app = FastAPI(title="隐私政策合规审查 API")
 
-# CORS 配置
+# CORS 配置（前端 Vite dev server 默认端口 5000，Cloudflare Pages 生产域名）
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://sy-s-web.pages.dev", "http://localhost:3000"],
+    allow_origins=[
+        "https://sy-s-web.pages.dev",   # Cloudflare Pages 生产环境
+        "http://localhost:5000",        # Vite 开发环境
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -190,63 +127,97 @@ init_db()
 app.include_router(auth_router)
 
 # ==========================================
+# 合规指标体系与权重定义
+# ==========================================
+INDICATORS = {
+    "过度收集敏感数据": {"weight": 0.15, "legal_basis": "《个人信息保护法》第六条'最小必要'原则及第二十九条", "id": "I1"},
+    "未说明收集目的": {"weight": 0.12, "legal_basis": "《个人信息保护法》第十七条", "id": "I2"},
+    "未获得明示同意": {"weight": 0.15, "legal_basis": "《个人信息保护法》第十四条", "id": "I3"},
+    "收集范围超出服务需求": {"weight": 0.10, "legal_basis": "《个人信息保护法》第六条", "id": "I4"},
+    "未明确第三方共享范围": {"weight": 0.08, "legal_basis": "《个人信息保护法》第二十三条", "id": "I5"},
+    "未获得单独共享授权": {"weight": 0.12, "legal_basis": "《个人信息保护法》第二十三条", "id": "I6"},
+    "未明确共享数据用途": {"weight": 0.08, "legal_basis": "《个人信息保护法》第二十三条及GDPR第四十六条", "id": "I7"},
+    "未明确留存期限": {"weight": 0.05, "legal_basis": "《个人信息保护法》第十九条", "id": "I8"},
+    "未说明数据销毁机制": {"weight": 0.05, "legal_basis": "《个人信息保护法》第四十七条", "id": "I9"},
+    "未明确用户权利范围": {"weight": 0.05, "legal_basis": "《个人信息保护法》第四十四至四十八条", "id": "I10"},
+    "未提供便捷权利行使途径": {"weight": 0.03, "legal_basis": "《个人信息保护法》第五十条", "id": "I11"},
+    "未明确权利响应时限": {"weight": 0.02, "legal_basis": "《个人信息安全规范》GB/T 35273-2020", "id": "I12"}
+}
+
+# 创建 ID 到指标名称的映射
+ID_TO_INDICATOR = {v["id"]: k for k, v in INDICATORS.items()}
+INDICATOR_KEYS = list(INDICATORS.keys())
+
+# 违规类型整改提示语（与 INDICATORS 一一对应，按 ID 索引）
+VIOLATION_HINTS = {
+    "I1": "【重要】涉及收集个人信息，必须遵守最小必要原则，只能收集与服务直接相关的个人信息，禁止收集与服务无关的敏感信息。",
+    "I2": "【重要】必须明确说明每项个人信息收集的具体目的和用途，不能使用模糊表述。",
+    "I3": "【重要】涉及处理个人信息必须获得用户明确、知情、自愿的同意，不能捆绑授权。",
+    "I4": "【重要】收集范围不得超过实现处理目的的最小必要范围。",
+    "I5": "【重要】向第三方共享时必须明确说明接收方类型、共享目的、数据类型，禁止无限制共享。",
+    "I6": "【重要】向第三方提供个人信息必须单独取得用户明示同意。",
+    "I7": "【重要】必须明确说明第三方使用数据的目的和范围。",
+    "I8": "【重要】必须明确数据存储期限，期限届满应予以删除或匿名化。",
+    "I9": "【重要】必须说明数据销毁机制，承诺在约定保存期限届满后主动删除或匿名化处理。",
+    "I10": "【重要】必须明确列举用户享有的各项权利及行使方式。",
+    "I11": "【重要】必须提供便捷的渠道供用户行使权利，渠道必须易于发现和操作。",
+    "I12": "【重要】必须明确权利响应时限，承诺在法定期限内处理用户请求。",
+}
+
+# ==========================================
+# Pydantic 数据模型定义 (Schema)
+# ==========================================
+class AnalyzeRequest(BaseModel):
+    text: str = Field(..., min_length=10, max_length=50000)
+    source_type: Optional[str] = "text"
+    
+    @field_validator('text')
+    @classmethod
+    def validate_text(cls, v):
+        if not v.strip():
+            raise ValueError('文本不能为空')
+        return v
+
+class AnalyzeResponse(BaseModel):
+    id: str
+    name: str
+    score: float
+    risk_level: str
+    violations: List[dict]
+
+class RectifyRequest(BaseModel):
+    original_snippet: str
+    violation_type: str
+    mode: str = Field(default="rewrite", description="整改模式: summary(摘要建议) | rewrite(完整改写)")
+    legal_basis: Optional[str] = Field(None, description="前端传入的法律依据（可选，后端优先使用RAG检索结果）")
+
+class UrlRequest(BaseModel):
+    url: str
+
+# ==========================================
+# 风险等级阈值（与前端 violation-config.ts 对齐）
+# ==========================================
+# 审查级：基于总分
+SCORE_THRESHOLD_LOW_RISK = 70     # score >= 70 → 低风险
+SCORE_THRESHOLD_HIGH_RISK = 40    # score < 40 → 高风险（40~70 中等风险）
+
+# ==========================================
 # 辅助函数
 # ==========================================
 def split_into_sentences(text: str) -> List[str]:
-    # 使用正向预查保留标点，避免句子末尾标点丢失
-    sentences = re.split(r'(?<=[。；\n])', text)
+    sentences = re.split(r'[。；\n]+', text)
     return [s.strip() for s in sentences if len(s.strip()) > 5]
 
 def roberta_predict(sentence: str) -> Dict[str, float]:
-    """
-    预测句子是否包含违规
-    
-    模型输出 11 类，使用 map_to_12_classes 映射到 12 类指标
-    支持 confidence 双重过滤
-    """
-    if model_roberta is None or tokenizer_roberta is None:
-        return {key: 0.0 for key in INDICATOR_KEYS}
-    
     inputs = tokenizer_roberta(sentence, return_tensors="pt", truncation=True, max_length=512)
-    input_ids = inputs["input_ids"]
-    attention_mask = inputs.get("attention_mask", torch.ones_like(input_ids))
-    
     with torch.no_grad():
-        logits = model_roberta(input_ids, attention_mask=attention_mask)
-        
-        # 计算 confidence = max(logits) - mean(logits)
-        logits_squeezed = logits.squeeze()
-        if logits_squeezed.dim() > 0:
-            confidence_val = (logits_squeezed.max() - logits_squeezed.mean()).item()
-        else:
-            confidence_val = None
-        
-        probs = torch.sigmoid(logits).squeeze().tolist()
+        outputs = model_roberta(**inputs)
+        probs = torch.sigmoid(outputs.logits).squeeze().tolist()
     
     if not isinstance(probs, list):
         probs = [probs]
-    
-    # 初始化所有 12 类为 0
-    result = {key: 0.0 for key in INDICATOR_KEYS}
-    
-    # 使用 map_to_12_classes 进行映射 (传入 confidence 做双重过滤)
-    violation_ids = map_to_12_classes(probs, confidence=confidence_val)
-    
-    if not violation_ids:
-        return result
-    
-    # 多标签映射时差异化赋值：主标签取 max(prob)，副标签打折
-    max_prob = max(probs)
-    for i, vid in enumerate(violation_ids):
-        indicator_name = VIOLATION_NAMES.get(vid)
-        if indicator_name and indicator_name in result:
-            if i == 0:
-                result[indicator_name] = max_prob
-            else:
-                # 副标签取 max * 0.8，体现主次关系
-                result[indicator_name] = round(max_prob * 0.8, 4)
-    
-    return result
+        
+    return {INDICATOR_KEYS[i]: probs[i] for i in range(min(len(probs), len(INDICATOR_KEYS)))}
 
 def get_legal_basis_from_rag(violation_type: str, context: Optional[str] = None) -> str:
     """
@@ -378,24 +349,25 @@ async def analyze(
         for indicator, prob in probs.items():
             if prob > 0.5:
                 violation_flags[indicator] = 1
-                # 记录所有违规句子，不再限制只报一次
-                # 这样用户能看到所有违规位置，便于逐一整改
-                violation_id = INDICATORS[indicator]["id"]
-                legal_basis = get_legal_basis_from_rag(violation_id, context=sentence)
-                
-                violations_list.append({
-                    "indicator": indicator,
-                    "violation_id": violation_id,
-                    "snippet": sentence,
-                    "legal_basis": legal_basis
-                })
+                if not any(v["indicator"] == indicator for v in violations_list):
+                    # 获取违规类型ID
+                    violation_id = INDICATORS[indicator]["id"]
+                    # 使用 RAG 获取法律依据
+                    legal_basis = get_legal_basis_from_rag(violation_id, context=sentence)
+                    
+                    violations_list.append({
+                        "indicator": indicator,
+                        "violation_id": violation_id,
+                        "snippet": sentence,
+                        "legal_basis": legal_basis
+                    })
 
     penalty = sum(INDICATORS[ind]["weight"] * vi for ind, vi in violation_flags.items())
     total_score = round(max(0.0, 100.0 - (penalty * 100.0)), 1)
 
-    if total_score >= 70:
+    if total_score >= SCORE_THRESHOLD_LOW_RISK:
         risk_level = "低风险"
-    elif 40 <= total_score < 70:
+    elif SCORE_THRESHOLD_HIGH_RISK <= total_score < SCORE_THRESHOLD_LOW_RISK:
         risk_level = "中等风险"
     else:
         risk_level = "高风险"
@@ -414,31 +386,12 @@ async def analyze(
     db.add(project)
     db.commit()
     
-    # 将后端格式转换为前端 Clause 类型格式
-    frontend_violations = [
-        {
-            "id": f"CL-{i+1:04d}",
-            "location": "",
-            "category": v["violation_id"],
-            "categoryName": v["indicator"],
-            "snippet": v["snippet"],
-            "riskLevel": _get_risk_level(v["violation_id"]),
-            "reason": v["indicator"],
-            "originalText": v["snippet"],
-            "suggestedText": "",
-            "diffOriginalHtml": "",
-            "diffSuggestedHtml": "",
-            "legalBasis": v["legal_basis"]
-        }
-        for i, v in enumerate(violations_list)
-    ]
-    
     return {
         "id": project.id,
         "name": project.name,
         "score": project.score,
         "risk_level": project.risk_level,
-        "violations": frontend_violations
+        "violations": violations_list
     }
 
 @app.post("/api/v1/rectify")
@@ -446,147 +399,76 @@ async def rectify_snippet(
     request: RectifyRequest,
     current_user: User = Depends(get_current_user)
 ):
-    """整改违规条款 - 使用 HuggingFace Inference API (Phi-4 Mini) 生成合规改写"""
-    
-    # 从统一配置获取整改提示
-    from violation_config import get_hint
-    violation_hint = get_hint(request.violation_type)
-    
-    # 获取 RAG 法律依据
-    legal_context = request.legal_basis if request.legal_basis else get_legal_basis_from_rag(request.violation_type, context=request.original_snippet)
-    
-    # 提取法律关键词用于增强 prompt，传入 violation_id 做兜底
-    legal_keywords = extract_legal_keywords(legal_context, request.violation_type)
-    
-    suggested_text = ""
-    
-    # 优先使用 HuggingFace Inference API
-    if USE_HF_API and HF_TOKEN:
-        try:
-            from huggingface_hub import InferenceClient
-            
-            client = InferenceClient(model=HF_INFERENCE_MODEL, token=HF_TOKEN)
-            
-            # Phi-4 Mini Instruct 格式
-            messages = [
-                {"role": "system", "content": "你是一位资深的隐私合规专家。你需要根据提供的[法律依据]和[整改要求]，将[原句]重写为符合法律规范的表述。重写时必须：\n1. 遵循最小必要原则\n2. 明确说明处理目的\n3. 保障用户知情权和选择权\n4. 语言通俗易懂，避免法律术语堆砌"},
-                {"role": "user", "content": f"[法律依据摘要]：{legal_keywords}\n[整改要求]：{violation_hint}\n[原句]：{request.original_snippet}"}
-            ]
-            
-            response = client.chat_completion(
-                messages=messages,
-                max_tokens=512,
-                temperature=0.7
-            )
-            
-            suggested_text = response.choices[0].message.content.strip()
-            logger.info(f"HF Inference API (Phi-4 Mini) 生成成功")
-        except Exception as e:
-            logger.error(f"HF Inference API 生成失败: {e}")
-            suggested_text = ""
-    
-    # 降级方案：延迟加载 mT5（仅在 API 失败后加载）
-    if not suggested_text:
-        fallback_model, fallback_tokenizer = get_fallback_model()
-        if fallback_model is not None and fallback_tokenizer is not None:
-            try:
-                mt5_prompt = f"""请将以下隐私政策条款改写为符合法律规范的版本。
-【整改要求】{violation_hint}
-【原条款】{request.original_snippet}
-【合规改写】"""
-                
-                inputs = fallback_tokenizer(mt5_prompt, return_tensors="pt", truncation=True, max_length=512)
-                with torch.no_grad():
-                    outputs = fallback_model.generate(**inputs, max_length=256, temperature=0.3, do_sample=True)
-                suggested_text = fallback_tokenizer.decode(outputs[0], skip_special_tokens=True)
-                logger.info(f"mT5 降级生成成功")
-            except Exception as e:
-                logger.error(f"mT5 生成失败: {e}")
-                suggested_text = ""
-    
-    # 最终降级：基于规则的通用建议
-    if not suggested_text:
-        suggested_text = generate_rule_based_suggestion(request.original_snippet, request.violation_type, violation_hint)
+    """整改违规条款"""
+    # 使用 RAG 检索相关法律条款（失败时依次降级：前端传入值 → 静态配置）
+    legal_context = get_legal_basis_from_rag(request.violation_type, context=request.original_snippet)
+    if not legal_context or legal_context == "《个人信息保护法》":
+        legal_context = request.legal_basis or legal_context
+
+    # 获取整改提示语（模块级常量）
+    violation_hint = VIOLATION_HINTS.get(request.violation_type, "【重要】必须符合《个人信息保护法》相关要求。")
+
+    # 根据 mode 构建差异化 prompt + chat messages
+    if request.mode == "summary":
+        # 摘要模式：通俗解读违规原因与法律要求
+        user_content = f"""请对以下隐私政策条款进行通俗易懂的解读，帮助非法律专业人士理解该条款存在的问题。
+
+【法律依据】
+{legal_context}
+
+【违规类型说明】
+{violation_hint}
+
+【原条款】
+{request.original_snippet}
+
+请用简洁明了的语言回答以下三个问题：
+1. 这条条款说了什么？（用一句话概括原意）
+2. 它违反了什么法律规定？具体哪里不合规？
+3. 合规版本应该包含哪些关键要素？"""
+        system_content = "你是一位隐私政策合规解读专家，擅长将法律条文翻译成普通用户能理解的语言。请直接给出解读内容，不要添加多余的前缀或格式标记。"
+    else:
+        # 改写模式：以检测到的具体法律条文为依据，逐条改写
+        indicator_name = ID_TO_INDICATOR.get(request.violation_type, "")
+        indicator_legal = INDICATORS.get(indicator_name, {}).get("legal_basis", legal_context)
+
+        user_content = f"""你是一位隐私政策合规专家。以下条款被检测出违反特定法律规定，请根据该法律的具体要求进行改写。
+
+【检测结果】
+- 违规类别：{indicator_name}（{request.violation_type}）
+- 违反的法律条文：{indicator_legal}
+
+【相关法律依据详情】
+{legal_context}
+
+【具体整改要求】
+{violation_hint}
+
+【原条款】
+{request.original_snippet}
+
+请严格参照上述法律条文的具体要求，将原条款改写为符合该法律规定的合规版本。
+改写后的条款应当：
+1. 直接回应上述法律条文的要求，补全缺失的法定要素
+2. 保持隐私政策的专业表述风格，语言清晰准确
+3. 不改变原条款的核心业务意图，仅修正不合规之处"""
+        system_content = "你是一位隐私政策合规专家。请直接输出改写后的完整合规条款文本，不要添加任何解释、标注或前缀。"
+
+    response = llm.create_chat_completion(
+        messages=[
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": user_content}
+        ],
+        max_tokens=512,
+        temperature=0.3,
+    )
+    suggested_text = response["choices"][0]["message"]["content"].strip()
     
     return {
         "suggested_text": suggested_text,
-        "legal_basis": legal_context
+        "legal_basis": legal_context,
+        "mode": request.mode,
     }
-
-
-def extract_legal_keywords(legal_context: str, violation_id: str = None) -> str:
-    """从法律依据中提取关键要求
-    
-    Args:
-        legal_context: RAG 检索返回的法律依据文本
-        violation_id: 违规类型 ID（如 I1, I2），用于兜底
-    """
-    if not legal_context:
-        # 兜底：从统一配置获取法律依据
-        if violation_id:
-            from violation_config import get_legal_basis as _get_legal_basis
-            return _get_legal_basis(violation_id)
-        return "遵循《个人信息保护法》相关规定"
-    
-    # 提取法条编号
-    articles = re.findall(r'第[零一二三四五六七八九十百]+[条章节款]', legal_context)
-    law_names = re.findall(r'《[^》]+》', legal_context)
-    
-    # 提取关键动词和要求
-    keywords = []
-    if "同意" in legal_context:
-        keywords.append("获得明确同意")
-    if "告知" in legal_context:
-        keywords.append("充分告知")
-    if "最小" in legal_context or "必要" in legal_context:
-        keywords.append("最小必要原则")
-    if "目的" in legal_context:
-        keywords.append("明确处理目的")
-    if "删除" in legal_context or "匿名" in legal_context:
-        keywords.append("数据删除/匿名化")
-    if "第三方" in legal_context:
-        keywords.append("第三方共享限制")
-    if "权利" in legal_context:
-        keywords.append("用户权利保障")
-    if "期限" in legal_context or "时间" in legal_context:
-        keywords.append("响应时限")
-    
-    result = ""
-    if law_names:
-        result += "、".join(set(law_names)) + "规定："
-    if articles:
-        result += "、".join(articles[:3]) + "。"
-    if keywords:
-        result += "核心要求：" + "、".join(keywords[:4])
-    
-    # 最终兜底
-    if not result and violation_id:
-        from violation_config import get_legal_basis as _get_legal_basis
-        return _get_legal_basis(violation_id)
-    
-    return result or "遵循个人信息保护相关法律法规"
-
-
-def generate_rule_based_suggestion(original_text: str, violation_type: str, violation_hint: str) -> str:
-    """基于规则的降级建议生成"""
-    # 通用改写模板
-    templates = {
-        "I1": f"为了向您提供[具体服务名称]，我们仅收集实现该服务所必需的个人信息，包括[具体信息类型]。我们不会收集与服务无关的信息。",
-        "I2": f"我们收集您的[信息类型]用于[具体明确的目的]，包括[列举用途]。",
-        "I3": f"在收集您的个人信息前，我们将明确告知您收集的目的、方式和范围，并获得您的同意。您有权拒绝或撤回同意。",
-        "I4": f"我们仅收集实现服务目的所必需的最少个人信息，不收集与服务无关的信息。",
-        "I5": f"我们仅在以下情况下与第三方共享您的信息：①取得您的单独同意；②实现服务所必需；③法律法规要求。共享时我们会明确告知接收方类型和目的。",
-        "I6": f"向第三方提供您的个人信息前，我们会单独征求您的明示同意。",
-        "I7": f"第三方使用您的信息时，必须遵守本隐私政策的约定，仅用于约定的目的和范围。",
-        "I8": f"我们将在实现处理目的所必需的最短时间内保存您的个人信息，保存期限届满后将予以删除或匿名化处理。",
-        "I9": f"当保存期限届满或您行使删除权时，我们将按照法律法规要求的方式删除或匿名化您的个人信息。",
-        "I10": f"您依法享有查阅、复制、更正、删除您的个人信息的权利，以及数据可携带权等。",
-        "I11": f"您可以通过[具体渠道，如设置页面、联系邮箱]便捷地行使您的个人信息相关权利。",
-        "I12": f"我们将在收到您的权利请求后[法定期限/承诺期限]内进行处理和答复。",
-    }
-    
-    return templates.get(violation_type, f"建议修改为更加明确、具体且符合《个人信息保护法》等相关法规要求的表述。")
-
 
 @app.post("/api/v1/upload")
 async def upload_file(
@@ -640,33 +522,12 @@ async def get_project(
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
     
-    raw_violations = json.loads(project.result_json) if project.result_json else []
-    
-    # 将后端格式转换为前端 Clause 类型格式
-    frontend_violations = [
-        {
-            "id": f"CL-{i+1:04d}",
-            "location": "",
-            "category": v.get("violation_id", ""),
-            "categoryName": v.get("indicator", ""),
-            "snippet": v.get("snippet", ""),
-            "riskLevel": _get_risk_level(v.get("violation_id", "")),
-            "reason": v.get("indicator", ""),
-            "originalText": v.get("snippet", ""),
-            "suggestedText": v.get("suggestedText", ""),
-            "diffOriginalHtml": "",
-            "diffSuggestedHtml": "",
-            "legalBasis": v.get("legal_basis", "")
-        }
-        for i, v in enumerate(raw_violations)
-    ]
-    
     return {
         "id": project.id,
         "name": project.name,
         "score": project.score,
         "risk_level": project.risk_level,
-        "violations": frontend_violations,
+        "violations": json.loads(project.result_json) if project.result_json else [],
         "created_at": project.created_at.isoformat()
     }
 

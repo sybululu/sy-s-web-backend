@@ -3,7 +3,7 @@ src模块
 法律知识库系统的核心代码
 """
 from src.loader import LegalKBLoader, LoadedKnowledge
-from src.models import (
+from ..models import (
     Article,
     LawDocument,
     ViolationMapping,
