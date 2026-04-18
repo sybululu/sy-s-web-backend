@@ -478,30 +478,6 @@ def get_legal_basis_from_rag(violation_type: str, context: Optional[str] = None)
     if not RAG_AVAILABLE or retriever is None:
         return {"reference": default_ref, "references": [], "content": ""}
 
-
-def format_legal_paired(rag_legal: Dict) -> str:
-    """
-    将 RAG 检索结果格式化为「引用+正文」一一配对的展示文本。
-
-    输入: get_legal_basis_from_rag() 的返回值
-    输出: 每条法律以「《法名》第X款\\n正文内容」成对排列的文本
-    """
-    if not rag_legal.get("references"):
-        # 无 references 时降级为 reference + content 拼接
-        ref = rag_legal.get("reference", "")
-        content = rag_legal.get("content", "")
-        return f"{ref}\n{content}" if content else ref
-
-    paired_lines = []
-    for ref in rag_legal["references"]:
-        ref_title = f"《{ref['law']}》{ref['article']}"
-        ref_content = ref.get("content", "").strip()
-        if ref_content:
-            paired_lines.append(f"{ref_title}\n{ref_content}")
-        else:
-            paired_lines.append(ref_title)
-    return "\n\n".join(paired_lines)
-
     try:
         results = retriever.retrieve_by_violation_type(violation_type, context=context, top_k=5)
         if results:
@@ -529,6 +505,32 @@ def format_legal_paired(rag_legal: Dict) -> str:
         logger.error(f"RAG 检索失败: {e}")
 
     return {"reference": default_ref, "references": [], "content": ""}
+
+
+def format_legal_paired(rag_legal: Dict) -> str:
+    """
+    将 RAG 检索结果格式化为「引用+正文」一一配对的展示文本。
+
+    输入: get_legal_basis_from_rag() 的返回值
+    输出: 每条法律以「《法名》第X款\\n正文内容」成对排列的文本
+    """
+    if not rag_legal:
+        return ""
+    if not rag_legal.get("references"):
+        # 无 references 时降级为 reference + content 拼接
+        ref = rag_legal.get("reference", "")
+        content = rag_legal.get("content", "")
+        return f"{ref}\n{content}" if content else ref
+
+    paired_lines = []
+    for ref in rag_legal["references"]:
+        ref_title = f"《{ref['law']}》{ref['article']}"
+        ref_content = ref.get("content", "").strip()
+        if ref_content:
+            paired_lines.append(f"{ref_title}\n{ref_content}")
+        else:
+            paired_lines.append(ref_title)
+    return "\n\n".join(paired_lines)
 
 # ==========================================
 # 全局异常处理
