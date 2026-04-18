@@ -75,7 +75,7 @@ def map_to_12_classes(probs: List[float], confidence: float = None) -> List[str]
     
     # 使用 confidence 和概率双重限制
     if confidence is not None:
-        CONFIDENCE_THRESHOLD = 3.0
+        CONFIDENCE_THRESHOLD = 2.0
         PROB_THRESHOLD = 0.6
         if confidence < CONFIDENCE_THRESHOLD or max_prob < PROB_THRESHOLD:
             return []
