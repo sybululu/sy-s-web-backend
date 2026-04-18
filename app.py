@@ -77,7 +77,7 @@ except ImportError as e:
 print("正在从 HuggingFace Hub 加载模型，首次运行需要下载...")
 
 import torch.nn as nn
-from transformers import BertModel
+# BertModel 已在文件顶部 from transformers import AutoTokenizer, BertModel 导入
 
 # 1. 加载 RoBERTa 风险分类模型（自定义模型类，完全复现训练时结构）
 # 训练代码中分类层命名为 self.fc（非标准库的 self.classifier），
@@ -161,19 +161,23 @@ if LLM_MODE == "local":
 
 if LLM_MODE == "github":
     # GitHub Models 模式：OpenAI 兼容接口，免费调用 Phi-4 Mini
-    try:
-        from openai import OpenAI
-        llm_github = OpenAI(
-            base_url="https://models.inference.ai.azure.com",
-            api_key=GITHUB_TOKEN,
-        )
-        print(f"✅ 整改生成模型: GitHub Models API 模式 (model={LLM_MODEL_ID})")
-    except ImportError:
-        logger.warning("openai 包未安装，回退到 HF Inference API 模式")
+    if not GITHUB_TOKEN or GITHUB_TOKEN == "your-github-token-here":
+        logger.warning("GITHUB_TOKEN 未配置或仍为默认值，回退到 HF Inference API 模式")
         LLM_MODE = "hf"
-    except Exception as e:
-        logger.warning(f"GitHub Models 初始化失败，回退到 HF Inference API 模式: {e}")
-        LLM_MODE = "hf"
+    else:
+        try:
+            from openai import OpenAI
+            llm_github = OpenAI(
+                base_url="https://models.inference.ai.azure.com",
+                api_key=GITHUB_TOKEN,
+            )
+            print(f"✅ 整改生成模型: GitHub Models API 模式 (model={LLM_MODEL_ID})")
+        except ImportError:
+            logger.warning("openai 包未安装，回退到 HF Inference API 模式")
+            LLM_MODE = "hf"
+        except Exception as e:
+            logger.warning(f"GitHub Models 初始化失败，回退到 HF Inference API 模式: {e}")
+            LLM_MODE = "hf"
 
 if LLM_MODE == "hf":
     # HF Inference API 模式（需 HF_TOKEN 有 Inference 权限，否则 403）
@@ -324,37 +328,38 @@ def roberta_predict(sentence: str) -> Dict[str, float]:
     max_prob = max(probs) if probs else 0.0
     return {vid: max_prob for vid in detected_ids}
 
-def get_legal_basis_from_rag(violation_type: str, context: Optional[str] = None) -> str:
+def get_legal_basis_from_rag(violation_type: str, context: Optional[str] = None) -> Dict[str, str]:
     """
-    使用 RAG 检索获取法律依据
-    
+    使用 RAG 检索获取法律依据（返回结构化数据：引用 + 正文）
+
     Args:
         violation_type: 违规类型ID，如 "I1"
         context: 违规上下文描述
-        
+
     Returns:
-        检索到的法律依据文本
+        {
+            "reference": "《个人信息保护法》第28条",   # 用于展示
+            "content": "处理敏感个人信息应当取得个人的单独同意..."  # 用于 prompt 注入
+        }
     """
+    default_ref = INDICATORS.get(ID_TO_INDICATOR.get(violation_type, ""), {}).get("legal_basis", "《个人信息保护法》")
+
     if not RAG_AVAILABLE or retriever is None:
-        # 回退到静态配置
-        for name, info in INDICATORS.items():
-            if info["id"] == violation_type:
-                return info["legal_basis"]
-        return "《个人信息保护法》"
-    
+        return {"reference": default_ref, "content": ""}
+
     try:
-        results = retriever.retrieve_by_violation_type(violation_type, context=context, top_k=3)
+        results = retriever.retrieve_by_violation_type(violation_type, context=context, top_k=2)
         if results:
-            # 合并检索结果
-            legal_refs = []
-            for result in results[:2]:
-                ref = f"{result.law}{result.article_number}"
-                legal_refs.append(ref)
-            return "；".join(legal_refs) if legal_refs else INDICATORS.get(ID_TO_INDICATOR.get(violation_type, ""), {}).get("legal_basis", "《个人信息保护法》")
+            # 取最相关的法律条款：引用 + 正文内容
+            best = results[0]
+            return {
+                "reference": best.law_reference if hasattr(best, 'law_reference') else f"《{best.law}》{best.article_number}",
+                "content": best.content or "",
+            }
     except Exception as e:
         logger.error(f"RAG 检索失败: {e}")
-    
-    return INDICATORS.get(ID_TO_INDICATOR.get(violation_type, ""), {}).get("legal_basis", "《个人信息保护法》")
+
+    return {"reference": default_ref, "content": ""}
 
 # ==========================================
 # 全局异常处理
@@ -460,14 +465,15 @@ async def analyze(
                 if not any(v["violation_id"] == violation_id for v in violations_list):
                     # 从 ID 反查指标名称
                     indicator_name = ID_TO_INDICATOR.get(violation_id, "")
-                    # 使用 RAG 获取法律依据
-                    legal_basis = get_legal_basis_from_rag(violation_id, context=sentence)
+                    # 使用 RAG 获取法律依据（结构化返回）
+                    rag_legal = get_legal_basis_from_rag(violation_id, context=sentence)
 
                     violations_list.append({
                         "indicator": indicator_name,
                         "violation_id": violation_id,
                         "snippet": sentence,
-                        "legal_basis": legal_basis
+                        "legal_basis": rag_legal["reference"],       # 引用格式，用于列表展示
+                        "legal_detail": rag_legal["content"],         # 条文正文，供详情查看
                     })
 
     # violation_flags 现在以 violation_id (如 "I1") 为 key
@@ -512,59 +518,73 @@ async def rectify_snippet(
     current_user: User = Depends(get_current_user)
 ):
     """整改违规条款"""
-    # 使用 RAG 检索相关法律条款（失败时依次降级：前端传入值 → 静态配置）
-    legal_context = get_legal_basis_from_rag(request.violation_type, context=request.original_snippet)
-    if not legal_context or legal_context == "《个人信息保护法》":
-        legal_context = request.legal_basis or legal_context
+    # 使用 RAG 检索相关法律条款（返回结构化数据：引用 + 正文）
+    rag_legal = get_legal_basis_from_rag(request.violation_type, context=request.original_snippet)
+    legal_reference = rag_legal["reference"]       # 用于展示和返回给前端
+    legal_content = rag_legal["content"]           # RAG 检索到的法律条文正文（注入 prompt）
+
+    # 如果 RAG 没有返回正文，用前端传入的兜底
+    if not legal_content:
+        legal_content = request.legal_basis or ""
 
     # 获取整改提示语（从 violation_config 统一获取）
     violation_hint = ID_TO_HINT.get(request.violation_type, "【重要】必须符合《个人信息保护法》相关要求。")
 
     # 根据 mode 构建差异化 prompt + chat messages
     if request.mode == "summary":
-        # 摘要模式：通俗解读违规原因与法律要求
-        user_content = f"""请对以下隐私政策条款进行通俗易懂的解读，帮助非法律专业人士理解该条款存在的问题。
-
-【法律依据】
-{legal_context}
-
-【违规类型说明】
-{violation_hint}
+        # ====== 摘要模式：先一句话概括，再通俗解释 ======
+        user_content = f"""你是一位隐私政策合规解读专家，擅长将法律条文翻译成普通用户能听懂的大白话。
 
 【原条款】
 {request.original_snippet}
 
-请用简洁明了的语言回答以下三个问题：
-1. 这条条款说了什么？（用一句话概括原意）
-2. 它违反了什么法律规定？具体哪里不合规？
-3. 合规版本应该包含哪些关键要素？"""
-        system_content = "你是一位隐私政策合规解读专家，擅长将法律条文翻译成普通用户能理解的语言。请直接给出解读内容，不要添加多余的前缀或格式标记。"
+【这条条款存在的问题】
+该条款被检测为存在合规风险。风险类型说明：{violation_hint}
+
+【相关法律依据】
+{legal_reference}
+{legal_content}
+
+请按以下格式输出（严格分两部分）：
+
+**第一部分：一句话概括**（必须在一句话内说完）
+用最简单的大白话告诉用户：这条条款到底想干什么、哪里有问题。
+示例格式："这条条款说公司会收集你的XX信息，但没告诉你用来干嘛，也不让你拒绝。"
+
+**第二部分：通俗解读**
+用日常语言解释：
+1. 这条条款实际在做什么？（用比喻或生活场景类比）
+2. 对用户有什么潜在影响？（可能带来的风险）
+3. 合规版本应该长什么样？（用户可以期待什么改进）"""
+        system_content = "你是隐私政策合规解读专家。输出必须严格分为「一句话概括」和「通俗解读」两部分，不要添加任何前缀、标题标记或法律术语堆砌。"
     else:
-        # 改写模式：以检测到的具体法律条文为依据，逐条改写
-        indicator_name = ID_TO_INDICATOR.get(request.violation_type, "")
-        indicator_legal = INDICATORS.get(indicator_name, {}).get("legal_basis", legal_context)
+        # ====== 改写模式：按 RAG 法律条文改写，输出不提及法律 ======
+        user_content = f"""你是一位资深隐私政策撰写专家，精通各国隐私法规的实际应用写作。
 
-        user_content = f"""你是一位隐私政策合规专家。以下条款被检测出违反特定法律规定，请根据该法律的具体要求进行改写。
-
-【检测结果】
-- 违规类别：{indicator_name}（{request.violation_type}）
-- 违反的法律条文：{indicator_legal}
-
-【相关法律依据详情】
-{legal_context}
-
-【具体整改要求】
-{violation_hint}
+【任务】
+将以下不合规的隐私政策条款改写为专业、自然的合规版本。
 
 【原条款】
 {request.original_snippet}
 
-请严格参照上述法律条文的具体要求，将原条款改写为符合该法律规定的合规版本。
-改写后的条款应当：
-1. 直接回应上述法律条文的要求，补全缺失的法定要素
-2. 保持隐私政策的专业表述风格，语言清晰准确
-3. 不改变原条款的核心业务意图，仅修正不合规之处"""
-        system_content = "你是一位隐私政策合规专家。请直接输出改写后的完整合规条款文本，不要添加任何解释、标注或前缀。"
+【改写要求（来自合规审查标准）】
+{violation_hint}
+
+【参考依据（内部参考，不要在输出中引用）】
+以下是相关法律的核心要求摘要，请据此调整改写方向，但最终输出中：
+- 禁止出现"根据XX法第X条"之类的法律引用
+- 禁止出现"依据法律规定"等表述
+- 只输出改写后的条款本身，像原生隐私政策一样自然
+
+法律要点摘要：
+{legal_content[:800] if legal_content else violation_hint}
+
+【改写原则】
+1. 保持原条款的业务意图不变（公司仍然要做这件事）
+2. 补全缺失的合规要素：目的说明、选择权、撤回方式等
+3. 语言风格：专业但不生硬，像大厂正式版隐私政策的写法
+4. 长度与原条款相当，不要过度膨胀"""
+        system_content = "你是隐私政策撰写专家。直接输出改写后的完整条款文本，不要任何解释、标注、前言或法律引用。"
 
     # 调用 LLM 生成整改建议（兼容三种模式：github / local / hf）
     messages = [
@@ -600,7 +620,8 @@ async def rectify_snippet(
     
     return {
         "suggested_text": suggested_text,
-        "legal_basis": legal_context,
+        "legal_basis": legal_reference,   # 返回引用格式（如"《个人信息保护法》第28条"）给前端展示
+        "legal_detail": legal_content,     # 返回完整条文内容（前端可选择性展示）
         "mode": request.mode,
     }
 
@@ -664,6 +685,26 @@ async def get_project(
         "violations": json.loads(project.result_json) if project.result_json else [],
         "created_at": project.created_at.isoformat()
     }
+
+class UpdateProjectRequest(BaseModel):
+    violations: List[dict]
+
+@app.put("/api/v1/projects/{project_id}")
+async def update_project(
+    project_id: str,
+    request: UpdateProjectRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """更新项目的违规条款数据（如采纳整改建议后回写 suggested_text）"""
+    project = db.query(Project).filter(Project.id == project_id, Project.user_id == current_user.id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    project.result_json = json.dumps(request.violations, ensure_ascii=False)
+    db.commit()
+
+    return {"message": "更新成功", "id": project.id}
 
 @app.get("/api/v1/export/{project_id}")
 async def export_report(
