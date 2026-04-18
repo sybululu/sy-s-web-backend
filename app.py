@@ -341,11 +341,17 @@ def is_likely_heading(sentence: str) -> bool:
     # 这些模式优先级最高，即使包含动作词也视为标题（如"一、信息收集"）
     _STRONG_HEADING = re.compile(
         r'^('
-        r'[一二三四五六七八九十]+[\.\、]'           # 一、/ 二、/
-        r'|[一二三四五六七八九十\d]+[\.\、\s]*(?:节|章|条款|部分)'  # 1.1 第一章
-        r'|^\d+[\.\)\s]+'                           # 1. / 1) /
+        # 中文序号: 一、/ 二、/ （一）/ 1、/ 1．(注意中文顿号和句点)
+        r'[一二三四五六七八九十\d]+[\.\、\．]'
+        # 带章节后缀: 第一章 / 1.1节 / 第X条
+        r'|[一二三四五六七八九十\d]+[\.\、\．\s]*(?:节|章|条款|部分)'
+        # 英文序号: 1. / 1) / (1)
+        r'|^\d+[\.\)\s]+'
+        # 常见隐私政策标题关键词（无实际行为的纯主题短语）
         r'|^(?:信息收集|信息使用|信息共享|数据安全|用户权利|Cookie|未成年人|'
-        r'联系我们|政策更新|生效时间|适用范围|定义|总则|附则|修订记录)'
+        r'联系我们|政策更新|生效时间|适用范围|定义|总则|附则|修订记录'
+        r'|您提供的信息|我们收集的信息|我们如何使用|我们如何共享'
+        r'|第三方服务|数据留存|安全措施|未成年人保护|您的权利'
         r')',
         re.UNICODE
     )
@@ -464,6 +470,30 @@ def get_legal_basis_from_rag(violation_type: str, context: Optional[str] = None)
 
     if not RAG_AVAILABLE or retriever is None:
         return {"reference": default_ref, "references": [], "content": ""}
+
+
+def format_legal_paired(rag_legal: Dict) -> str:
+    """
+    将 RAG 检索结果格式化为「引用+正文」一一配对的展示文本。
+
+    输入: get_legal_basis_from_rag() 的返回值
+    输出: 每条法律以「《法名》第X款\\n正文内容」成对排列的文本
+    """
+    if not rag_legal.get("references"):
+        # 无 references 时降级为 reference + content 拼接
+        ref = rag_legal.get("reference", "")
+        content = rag_legal.get("content", "")
+        return f"{ref}\n{content}" if content else ref
+
+    paired_lines = []
+    for ref in rag_legal["references"]:
+        ref_title = f"《{ref['law']}》{ref['article']}"
+        ref_content = ref.get("content", "").strip()
+        if ref_content:
+            paired_lines.append(f"{ref_title}\n{ref_content}")
+        else:
+            paired_lines.append(ref_title)
+    return "\n\n".join(paired_lines)
 
     try:
         results = retriever.retrieve_by_violation_type(violation_type, context=context, top_k=5)
@@ -631,8 +661,8 @@ async def analyze(
                     "indicator": indicator_name,
                     "violation_id": violation_id,
                     "snippet": sentence,
-                    "legal_basis": rag_legal["reference"],
-                    "legal_detail": rag_legal["content"],
+                    "legal_basis": format_legal_paired(rag_legal),  # 配对格式
+                    "legal_detail": "",                             # 已合并到 legal_basis
                     "legal_references": rag_legal.get("references", []),
                     "confidence": round(prob, 4),
                 })
@@ -693,94 +723,121 @@ async def rectify_snippet(
     # 获取整改提示语（从 violation_config 统一获取）
     violation_hint = ID_TO_HINT.get(request.violation_type, "【重要】必须符合《个人信息保护法》相关要求。")
 
+    # ── 从 RAG 提取法律引用（仅引用名，不含正文 —— 给权威锚点但不给复读素材） ──
+    rag_refs = rag_legal.get("references", [])
+    if rag_refs:
+        legal_citations = "\n".join(f"  - 《{r['law']}》{r['article']}" for r in rag_refs)
+    else:
+        legal_citations = f"  - {rag_legal.get('reference', '《个人信息保护法')}"
+
     # 根据 mode 构建差异化 prompt + chat messages
     if request.mode == "summary":
-        # ====== 摘要模式：条款本质 + 风险点拨 ======
-        user_content = f"""# Rules
-1. **语义简化**：不使用法律术语，而是用普通人日常生活的词汇。
-2. **客观陈述**：去掉带有强烈感情色彩的贬义词（如"偷走"、"流氓"），改为客观描述其行为本质。
-3. **结构严谨**：严格按照下方格式输出，字数保持精炼。
-4. **纯净输出**：禁止输出任何格式标记（如 #、###、>、**、- 之类的 Markdown 符号），只输出纯文本内容。
+        # ====== 摘要模式：基于法律依据的专业解读 ======
+        #
+        # 策略：
+        #   1. 给法律引用名（"《个保法》第六条"）作为权威锚点，不给正文 → 不复读
+        #   2. 要求模型"基于以上法律分析"，用自身知识解读 → 有专业性
+        #   3. 固定四段式结构 → 逻辑清晰不散
+        #   4. 明确禁止逐字引用条文 → 避免复读
 
----
+        VIOLATION_CORE_ISSUE = {
+            "I1": "收集敏感个人信息（生物识别、健康、位置、通讯录等），但未说明收集目的或超出必要范围",
+            "I2": "收集用户信息但未说明具体用途，使用'提升体验'等模糊表述",
+            "I3": "将同意与服务捆绑，用户不同意则无法使用（默认勾选/即视为同意）",
+            "I4": "收集的信息范围超出了提供服务实际需要",
+            "I5": "提及向第三方共享信息，但未说明共享对象、范围或种类",
+            "I6": "向第三方提供信息前未取得用户单独同意",
+            "I7": "允许第三方使用数据，但未限定具体目的和范围",
+            "I8": "未说明数据的留存期限",
+            "I9": "未说明留存期满后的数据销毁或匿名化处理方式",
+            "I10": "未完整告知用户对其数据享有的法定权利",
+            "I11": "提到用户权利但未提供便捷的行使途径（在线入口/联系方式）",
+            "I12": "未承诺权利请求的响应时限",
+        }
+        core_issue = VIOLATION_CORE_ISSUE.get(request.violation_type,
+            "存在合规风险，可能损害用户权益")
 
-# Output Format（按顺序输出以下两部分，每部分开头用中文标题）
+        user_content = f"""请对以下隐私政策条款进行合规风险分析。
 
-第一部分标题：条款本质
-输出一句引用格式的文字，说明条款的实际含义。
-示例：这句条款的实际意思是：公司在用户注册时，即使未明确告知用途，也会收集用户的通讯录和位置信息。
+【条款原文】
+{request.original_snippet}
 
-第二部分标题：风险点拨
-分两段输出，每段开头用中文标签：
-实际行为：[一段话解释该条款在现实中如何运作]
-潜在影响：[一句话说明可能导致的结果]
+【违规类型】{core_issue}
 
----
+【相关法律依据】
+{legal_citations}
+
+请严格按以下四个部分回答，每部分用标题开头：
+
+一、问题诊断
+指出这条条款违反了上面列出的哪条（或哪几条）法律的具体要求，用一两句话说明违在哪里。（提到法律时只用法名+条目号，不要引用原文）
+
+二、通俗解读
+用大白话翻译这条条款——它实际上在干什么、对用户意味着什么。不要复述原文，用自己的话重新表述。
+
+三、影响评估
+分两点，每点一句话：
+• 日常影响：普通用户会因此遭遇什么
+• 最坏情况：如果被滥用可能造成什么后果
+
+四、整改方向
+一句话说明怎么改才能符合上述法律要求。"""
+
+        system_content = ("你是隐私合规顾问，擅长将法律要求转化为普通人能理解的分析。"
+            "你的回答要有法律依据支撑（引用具体法条），但表达要自然流畅，像在给同事做简报。"
+            "结构清晰、逻辑连贯、不啰嗦。绝对不要大段引用或复述法律条文原文。")
+    else:
+        # ====== 改写模式：法律约束驱动 + 编辑指令 ======
+        #
+        # 策略：
+        #   1. 给法律引用名（"《个保法》第六条"）作为合规边界 → 有法可依
+        #   2. 给具体编辑指令（怎么改）→ 操作明确
+        #   3. 给 before→after 示例 → 锁定输出风格
+        #   4. 全程不给法律正文 → 不复读
+        violation_type_name = ID_TO_INDICATOR.get(request.violation_type, request.violation_type)
+
+        EDIT_INSTRUCTIONS = {
+            "I1": "删除或缩小敏感数据收集范围。只保留与核心功能直接相关的信息类型，加上'仅限于用户主动使用该功能时'的限定语。",
+            "I2": "在每项信息收集后面补上具体用途说明，格式为'用于[具体功能]'。删除'提升体验''业务需要'等模糊表述。",
+            "I3": "把默认同意改为主动选择。加上'您可以选择是否'前缀，删除'即视为同意''注册即表示'等捆绑表述。",
+            "I4": "删除与服务核心功能无关的信息收集项。保留的每项都要能回答'这个功能为什么需要它'。",
+            "I5": "把'合作伙伴''第三方'替换为具体类型（如'支付服务商''物流配送方'），并列出共享的数据种类。",
+            "I6": "在第三方共享描述前加上'我们将单独征得您的同意后'，明确区分于主政策同意。",
+            "I7": "在第三方共享描述后补充具体用途，如'仅用于[指定目的]，不得用于其他用途'。",
+            "I8": "为每类数据添加留存时限，格式为'保存期限为[时间]，届满后将删除或匿名化'。",
+            "I9": "补充销毁说明：'保存期限届满后，我们将采取[技术手段]删除或匿名化处理'。",
+            "I10": "列举用户权利项目：查询、更正、删除、撤回同意、获取可携带副本、投诉举报。",
+            "I11": "提供具体联系方式：在线入口路径、邮箱地址、客服热线，加上'我们将在[时限]内响应'。",
+            "I12": "加上具体时限承诺：'将在收到请求后15个工作日内处理并反馈结果'。",
+        }
+        edit_instruction = EDIT_INSTRUCTIONS.get(request.violation_type,
+            "修改条款使其符合相关法律要求，删除模糊表述和过度收集内容。")
+
+        user_content = f"""修改以下隐私政策条款，使其符合法律规定。
 
 【原条款】
 {request.original_snippet}
 
-【合规风险】
-{violation_hint}
+【须满足的法律要求】
+{legal_citations}
+改写后的条款必须符合上述法律条文的要求。
 
-【相关法律依据】
-{legal_reference}
-{legal_content}
+【具体修改指令】
+{edit_instruction}
 
-请严格按上方 Output Format 输出，只输出两部分正文内容，不要添加任何额外文字、前缀、格式符号或分隔线。"""
-        system_content = "你是隐私政策合规解读专家。请严格按用户指定的 Output Format 输出纯净的纯文本内容，不要使用任何 Markdown 格式标记。"
-    else:
-        # ====== 改写模式：依法精准删改 ======
-        # 核心设计原则：
-        #   改写必须由 RAG 检索到的【具体法律条文】驱动，而非通用模板。
-        #   模型需要知道：违反了哪条法的哪一款 → 该款怎么规定的 → 原文哪里违例 → 怎么改才合规
-        #
-        # Prompt 结构：原条款 + 法律依据(压缩为约束条件) + 改写指令(强否定约束)
-        violation_type_name = ID_TO_INDICATOR.get(request.violation_type, request.violation_type)
+【示例】
+原句：「为了提供更好的服务，我们可能会收集您的位置信息、通讯录等。」
+修改后：「在使用地图导航功能时，我们会收集您的位置信息，用于实时导航和路线规划。您可以随时在设置中关闭。」
 
-        # 直接复用函数开头已检索的 rag_legal（含 references 结构化列表），不重复调用 RAG
-        legal_ref_list = rag_legal.get("references", [])
+原句：「注册即视为您已同意本政策全部条款。」
+修改后：「请您仔细阅读本政策。勾选'我同意'并完成注册，即表示您已知晓并同意以下内容。您可以随时撤回同意。」
 
-        if legal_ref_list:
-            # 有 RAG 结果：将法律条文提炼为「约束指令」而非大段引用
-            # 关键：不把法律正文塞给模型，而是告诉模型「法律要求什么」
-            law_constraints = []
-            for ref in legal_ref_list:
-                ref_content = ref.get("content", "").strip()
-                if ref_content:
-                    # 只取前 80 字，且加上「要求：」前缀，变成约束而非引文
-                    truncated = ref_content[:80] + ("..." if len(ref_content) > 80 else "")
-                    law_constraints.append(
-                        f"- 要求：{truncated}（来源：《{ref['law']}》{ref['article']}）"
-                    )
-            legal_basis_detail = "\n".join(law_constraints)
-        else:
-            # RAG 无结果时降级为静态配置
-            static_ref = INDICATORS.get(violation_type_name, {}).get("legal_basis", "")
-            static_hint = ID_TO_HINT.get(request.violation_type, "")
-            legal_basis_detail = f"- 要求：{static_ref}\n  合规要点：{static_hint}"
+【现在请改写原条款】
+直接输出修改后的完整文字。不要解释、不要标注、不要引用法律原文。"""
 
-        user_content = f"""【原条款】
-{request.original_snippet}
-
-【合规要求（法律规定的硬性约束，你必须满足这些要求）】
-{legal_basis_detail}
-
-【改写规则】
-1. 直接输出修改后的隐私政策正文，不要任何前缀、标题、编号、解释
-2. 删除违反上述要求的表述，保留不违规的部分
-3. 如果某项信息收集缺乏法律要求的必要说明，用最短的方式补上（不超过半句）
-4. 输出总字数严格控制在原文的 70% 以内
-
-【禁止事项 — 违反以下任一条即为失败】
-- 禁止输出「根据XX法」「依照XX规定」「依据XX法第X条」等引用语
-- 禁止复述、概括、转述上述法律条文的内容
-- 禁止输出「修改说明」「改动理由」「对比分析」等解释性文字
-- 禁止输出 Markdown 格式标记（# * - > 等）
-- 禁止输出原标题或标注「改写后」「修订版」等标签
-- 禁止在正文之外输出任何其他内容"""
-
-        system_content = "你是一个只做不改说的文案编辑。你的唯一任务是：输入一段有法律问题的隐私政策条款，输出修改后的干净正文。像删除键一样工作——删掉问题的，保留没问题的。绝对不要解释、不要引用法律、不要加注释。只给结果。"
+        system_content = ("你是资深隐私政策文案编辑，精通中国个人信息保护法规。"
+            "你的改写要满足两个条件：(1)符合所引用法律的具体要求；(2)语言自然流畅，读起来不像法律文书。"
+            "输出干净的文字即可，不加任何解释或标注。")
 
     # 调用 LLM 生成整改建议（兼容三种模式：github / local / hf）
     messages = [
@@ -816,8 +873,8 @@ async def rectify_snippet(
     
     return {
         "suggested_text": suggested_text,
-        "legal_basis": legal_reference,   # 返回引用格式（如"《个人信息保护法》第28条"）给前端展示
-        "legal_detail": legal_content,     # 返回完整条文内容（前端可选择性展示）
+        "legal_basis": format_legal_paired(rag_legal),  # 配对格式：引用+正文一一对应
+        "legal_detail": "",                            # 已合并到 legal_basis
         "mode": request.mode,
     }
 
