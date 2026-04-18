@@ -62,42 +62,31 @@ class Retriever:
         top_k: int = 3
     ) -> List[SearchResult]:
         """
-        根据违规类型检索相关法律条款
-        
+        根据违规类型 + 句子内容进行向量语义检索
+
+        从 141 条法律条文中，基于触发违规的原始句子内容，
+        通过语义相似度匹配最相关的法律条款。
+
         Args:
-            violation_type: 违规类型，如 "I1", "I2"
-            context: 违规上下文描述
+            violation_type: 违规类型，如 "I1", "I2"（用于过滤同类别条文）
+            context: 触发违规的原始句子（作为查询文本）
             top_k: 返回数量
-            
+
         Returns:
-            检索结果列表
+            检索结果列表（按语义相似度降序）
         """
         self.initialize()
-        
-        # 1. 先获取该违规类型关联的条款
-        related_articles = self.loader.get_articles_by_violation(violation_type)
-        
-        if not related_articles:
-            logger.warning(f"未找到违规类型 {violation_type} 的映射条款")
-            return []
-        
-        # 2. 使用向量检索获取语义相似的结果
+
+        # 直接用句子内容做语义检索，按 violation_type 过滤
         search_results = self.vector_store.search_by_violation(
-            violation_type, 
+            violation_type,
             context=context,
             top_k=top_k
         )
-        
-        # 3. 合并结果
+
         results = []
         seen_ids = set()
-        
-        # 优先添加映射的条款
-        for article in related_articles:
-            results.append(self._article_to_search_result(article))
-            seen_ids.add(article.article_id)
-        
-        # 添加向量检索结果
+
         for chunk in search_results:
             article_id = chunk.metadata.get("article_id")
             if article_id and article_id not in seen_ids:
@@ -105,11 +94,8 @@ class Retriever:
                 if article:
                     results.append(self._article_to_search_result(article, chunk.score))
                     seen_ids.add(article_id)
-            
-            if len(results) >= top_k + len(related_articles):
-                break
-        
-        return results[:top_k]
+
+        return results
     
     def retrieve_by_query(
         self,

@@ -217,29 +217,49 @@ class VectorStore:
         return results
     
     def search_by_violation(
-        self, 
-        violation_type: str, 
+        self,
+        violation_type: str,
         context: Optional[str] = None,
         top_k: int = 3
     ) -> List[RetrievedChunk]:
         """
-        根据违规类型检索相关条款
-        
+        根据违规类型 + 句子内容进行全库语义检索
+
+        不做 violation_type 硬过滤，在全部 141 条法律条文中
+        通过语义相似度找出最相关的条款，避免漏检。
+
         Args:
-            violation_type: 违规类型，如 "I1"
-            context: 可选的上下文描述
+            violation_type: 违规类型，如 "I1"（融入查询文本增强语义）
+            context: 触发违规的原始句子（核心查询内容）
             top_k: 返回数量
-            
+
         Returns:
-            检索结果
+            检索结果列表（按语义相似度降序）
         """
-        # 先按违规类型过滤
-        filters = {"violation_types": [violation_type]}
-        
         if context:
-            # 结合上下文语义检索
-            return self.search(context, top_k=top_k, filters=filters)
+            # 句子内容 + 违规类型关键词 组合查询，覆盖面最大
+            query = f"{context} {self._get_violation_keywords(violation_type)}"
         else:
-            # 仅使用违规类型关键词
-            return self.search(f"隐私政策 {violation_type} 合规", 
-                             top_k=top_k, filters=filters)
+            query = f"隐私政策 {violation_type} 合规"
+
+        # 不加 filters，在全部 141 条中自由检索
+        return self.search(query, top_k=top_k)
+
+    @staticmethod
+    def _get_violation_keywords(violation_type: str) -> str:
+        """违规类型到检索关键词的映射"""
+        KEYWORDS = {
+            "I1": "过度收集 敏感数据 最小必要 超范围收集",
+            "I2": "收集目的 未说明 目的不明确",
+            "I3": "明示同意 未获得同意 捆绑授权",
+            "I4": "超出服务需求 收集范围 过度",
+            "I5": "第三方共享 未告知 接收方",
+            "I6": "单独同意 第三方共享授权",
+            "I7": "共享用途 数据用途 不明确",
+            "I8": "留存期限 存储期限 未明确",
+            "I9": "销毁机制 数据删除 匿名化",
+            "I10": "用户权利 知情权 更正权 删除权",
+            "I11": "权利行使途径 渠道 便捷",
+            "I12": "响应时限 处理期限 时间",
+        }
+        return KEYWORDS.get(violation_type, f"{violation_type} 合规")

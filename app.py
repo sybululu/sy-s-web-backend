@@ -360,9 +360,9 @@ def roberta_predict(sentence: str) -> Dict[str, Any]:
         "class_name": CLASS_NAMES[max_idx] if 0 <= max_idx < len(CLASS_NAMES) else f"未知({max_idx})",
     }
 
-def get_legal_basis_from_rag(violation_type: str, context: Optional[str] = None) -> Dict[str, str]:
+def get_legal_basis_from_rag(violation_type: str, context: Optional[str] = None) -> Dict[str, any]:
     """
-    使用 RAG 检索获取法律依据（返回结构化数据：引用 + 正文）
+    使用 RAG 检索获取法律依据（返回结构化数据：引用列表 + 正文列表）
 
     Args:
         violation_type: 违规类型ID，如 "I1"
@@ -370,28 +370,46 @@ def get_legal_basis_from_rag(violation_type: str, context: Optional[str] = None)
 
     Returns:
         {
-            "reference": "《个人信息保护法》第28条",   # 用于展示
-            "content": "处理敏感个人信息应当取得个人的单独同意..."  # 用于 prompt 注入
+            "reference": "《个人信息保护法》第六条；网络安全法第四十一条",  # 逗号分隔用于展示
+            "references": [                                              # 结构化列表
+                {"law": "个人信息保护法", "article": "第六条", "content": "..."},
+                {"law": "网络安全法", "article": "第四十一条", "content": "..."},
+            ],
+            "content": "处理敏感个人信息应当取得个人的单独同意..."          # 用于 prompt 注入（拼接所有正文）
         }
     """
     default_ref = INDICATORS.get(ID_TO_INDICATOR.get(violation_type, ""), {}).get("legal_basis", "《个人信息保护法》")
 
     if not RAG_AVAILABLE or retriever is None:
-        return {"reference": default_ref, "content": ""}
+        return {"reference": default_ref, "references": [], "content": ""}
 
     try:
-        results = retriever.retrieve_by_violation_type(violation_type, context=context, top_k=2)
+        results = retriever.retrieve_by_violation_type(violation_type, context=context, top_k=5)
         if results:
-            # 取最相关的法律条款：引用 + 正文内容
-            best = results[0]
+            references = []
+            prompt_contents = []   # 注入 prompt 用，每条截断 200 字
+            for r in results:
+                ref = r.law_reference if hasattr(r, 'law_reference') else f"《{r.law}》{r.article_number}"
+                full_content = r.content or ""
+                references.append({
+                    "law": getattr(r, 'law', ''),
+                    "article": getattr(r, 'article_number', ''),
+                    "reference": ref,
+                    "content": full_content,          # 完整正文，给前端展示用
+                })
+                if full_content:
+                    # 注入 prompt 时每条截断 200 字
+                    prompt_contents.append(full_content[:200] + ("..." if len(full_content) > 200 else ""))
+
             return {
-                "reference": best.law_reference if hasattr(best, 'law_reference') else f"《{best.law}》{best.article_number}",
-                "content": best.content or "",
+                "reference": "；".join(ref["reference"] for ref in references),
+                "references": references,             # 含完整 content
+                "content": "\n\n".join(prompt_contents),  # 截断版，用于 prompt
             }
     except Exception as e:
         logger.error(f"RAG 检索失败: {e}")
 
-    return {"reference": default_ref, "content": ""}
+    return {"reference": default_ref, "references": [], "content": ""}
 
 # ==========================================
 # 全局异常处理
@@ -506,23 +524,21 @@ async def analyze(
         })
 
         # 从 mapped 结果中提取违规（仅保留 prob > 0.5 的）
+        # 每个句子的每个违规类型都独立记录，不去重
         for violation_id, prob in pred.get("mapped", {}).items():
             if prob > 0.5:
                 violation_flags[violation_id] = 1
-                if not any(v["violation_id"] == violation_id for v in violations_list):
-                    # 从 ID 反查指标名称
-                    indicator_name = ID_TO_INDICATOR.get(violation_id, "")
-                    # 使用 RAG 获取法律依据（结构化返回）
-                    rag_legal = get_legal_basis_from_rag(violation_id, context=sentence)
-
-                    violations_list.append({
-                        "indicator": indicator_name,
-                        "violation_id": violation_id,
-                        "snippet": sentence,
-                        "legal_basis": rag_legal["reference"],       # 引用格式，用于列表展示
-                        "legal_detail": rag_legal["content"],         # 条文正文，供详情查看
-                        "confidence": round(prob, 4),                 # 分类置信度（恢复此字段）
-                    })
+                indicator_name = ID_TO_INDICATOR.get(violation_id, "")
+                rag_legal = get_legal_basis_from_rag(violation_id, context=sentence)
+                violations_list.append({
+                    "indicator": indicator_name,
+                    "violation_id": violation_id,
+                    "snippet": sentence,
+                    "legal_basis": rag_legal["reference"],
+                    "legal_detail": rag_legal["content"],
+                    "legal_references": rag_legal.get("references", []),
+                    "confidence": round(prob, 4),
+                })
 
     # violation_flags 现在以 violation_id (如 "I1") 为 key
     penalty = sum(
@@ -581,59 +597,75 @@ async def rectify_snippet(
 
     # 根据 mode 构建差异化 prompt + chat messages
     if request.mode == "summary":
-        # ====== 摘要模式：先一句话概括，再通俗解释 ======
-        user_content = f"""你是一位隐私政策合规解读专家，擅长将法律条文翻译成普通用户能听懂的大白话。
+        # ====== 摘要模式：条款本质 + 风险点拨 ======
+        user_content = f"""# Rules
+1. **语义简化**：不使用法律术语，而是用普通人日常生活的词汇。
+2. **客观陈述**：去掉带有强烈感情色彩的贬义词（如"偷走"、"流氓"），改为客观描述其行为本质。
+3. **结构严谨**：严格按照下方格式输出，字数保持精炼。
+4. **纯净输出**：禁止输出任何格式标记（如 #、###、>、**、- 之类的 Markdown 符号），只输出纯文本内容。
+
+---
+
+# Output Format（按顺序输出以下两部分，每部分开头用中文标题）
+
+第一部分标题：条款本质
+输出一句引用格式的文字，说明条款的实际含义。
+示例：这句条款的实际意思是：公司在用户注册时，即使未明确告知用途，也会收集用户的通讯录和位置信息。
+
+第二部分标题：风险点拨
+分两段输出，每段开头用中文标签：
+实际行为：[一段话解释该条款在现实中如何运作]
+潜在影响：[一句话说明可能导致的结果]
+
+---
 
 【原条款】
 {request.original_snippet}
 
-【这条条款存在的问题】
-该条款被检测为存在合规风险。风险类型说明：{violation_hint}
+【合规风险】
+{violation_hint}
 
 【相关法律依据】
 {legal_reference}
 {legal_content}
 
-请按以下格式输出（严格分两部分）：
-
-**第一部分：一句话概括**（必须在一句话内说完）
-用最简单的大白话告诉用户：这条条款到底想干什么、哪里有问题。
-示例格式："这条条款说公司会收集你的XX信息，但没告诉你用来干嘛，也不让你拒绝。"
-
-**第二部分：通俗解读**
-用日常语言解释：
-1. 这条条款实际在做什么？（用比喻或生活场景类比）
-2. 对用户有什么潜在影响？（可能带来的风险）
-3. 合规版本应该长什么样？（用户可以期待什么改进）"""
-        system_content = "你是隐私政策合规解读专家。输出必须严格分为「一句话概括」和「通俗解读」两部分，不要添加任何前缀、标题标记或法律术语堆砌。"
+请严格按上方 Output Format 输出，只输出两部分正文内容，不要添加任何额外文字、前缀、格式符号或分隔线。"""
+        system_content = "你是隐私政策合规解读专家。请严格按用户指定的 Output Format 输出纯净的纯文本内容，不要使用任何 Markdown 格式标记。"
     else:
-        # ====== 改写模式：按 RAG 法律条文改写，输出不提及法律 ======
-        user_content = f"""你是一位资深隐私政策撰写专家，精通各国隐私法规的实际应用写作。
+        # ====== 改写模式：首席法务官风格，深度揉合 RAG 依据 ======
+        violation_type_name = ID_TO_INDICATOR.get(request.violation_type, request.violation_type)
+        violation_type_desc = f"{violation_type_name}（{request.violation_type}）：{violation_hint}"
 
-【任务】
-将以下不合规的隐私政策条款改写为专业、自然的合规版本。
+        user_content = f"""# Role
+你是一位拥有深厚文字功底的【首席隐私法务官】，擅长将严苛的合规要求【无缝融入】业务文本。你写出的条款既能满足监管标准，读起来又如同出自顶级互联网公司之手，自然且专业。
 
-【原条款】
-{request.original_snippet}
+# Context
+- 【原条款原文】：{request.original_snippet}
+- 【检测到的违规】：{violation_type_desc}
+- 【🚨 核心依据 (RAG)】：
+{legal_content or violation_hint}
 
-【改写要求（来自合规审查标准）】
-{violation_hint}
+# Rewrite Strategy (精益求精)
+1. **深度揉合（逻辑衔接）**：
+   - 不要只是简单地把法律要求"挂"在句子末尾。
+   - 必须通过**因果、目的、条件**等逻辑关联词（如：为了...、在...情况下、我们将通过...等），将 RAG 要求的要素与原业务逻辑**揉成一个完整的段落或句子**。
+   - 确保文本具有纵深感和呼吸感，读起来逻辑连贯，而不是碎片的拼接。
 
-【参考依据（内部参考，不要在输出中引用）】
-以下是相关法律的核心要求摘要，请据此调整改写方向，但最终输出中：
-- 禁止出现"根据XX法第X条"之类的法律引用
-- 禁止出现"依据法律规定"等表述
-- 只输出改写后的条款本身，像原生隐私政策一样自然
+2. **以 RAG 为骨，以专业为皮**：
+   - 将【核心依据】中的强制性要求转化为【业务化表达】。
+   - 比如：如果法律要求"显著提示"，改写时可以用"我们会通过弹窗、加粗等显著方式..."来体现，而不是直接写"我们会显著提示"。
 
-法律要点摘要：
-{legal_content[:800] if legal_content else violation_hint}
+3. **原生化（隐身合规）**：
+   - 全文严禁出现"根据、依照、法律、合规"等词汇。
+   - 保持中立、严谨的法务口吻，排版整洁，像原生隐私政策一样自然。
 
-【改写原则】
-1. 保持原条款的业务意图不变（公司仍然要做这件事）
-2. 补全缺失的合规要素：目的说明、选择权、撤回方式等
-3. 语言风格：专业但不生硬，像大厂正式版隐私政策的写法
-4. 长度与原条款相当，不要过度膨胀"""
-        system_content = "你是隐私政策撰写专家。直接输出改写后的完整条款文本，不要任何解释、标注、前言或法律引用。"
+4. **针对性优化**：
+   - 仅针对违规点进行修补。若原文已有部分内容符合合规要求，应保留并作为衔接基础，避免过度改写导致语感走样。
+
+# Output Limitation
+- **只输出改写后的文本内容**。
+- 不得有任何前言、后记、标注或解释。"""
+        system_content = "你是首席隐私法务官。直接输出改写后的完整条款文本，不要任何解释、标注、前言或法律引用。"
 
     # 调用 LLM 生成整改建议（兼容三种模式：github / local / hf）
     messages = [
