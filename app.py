@@ -17,6 +17,7 @@ import json
 import os
 import re
 import logging
+import uuid
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 
@@ -650,11 +651,12 @@ async def analyze(
     else:
         risk_level = "高风险"
 
-    project_id = f"p{int(datetime.utcnow().timestamp())}"
+    project_id = f"p{uuid.uuid4().hex[:12]}"
+    now = datetime.utcnow()
     project = Project(
         id=project_id,
         user_id=current_user.id,
-        name=f"审查-{datetime.utcnow().strftime('%Y%m%d')}",
+        name=f"审查-{now.strftime('%Y%m%d-%H%M%S')}",
         source_type=request.source_type,
         score=total_score,
         risk_level=risk_level,
