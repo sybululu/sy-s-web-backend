@@ -733,65 +733,52 @@ async def rectify_snippet(
         #   改写必须由 RAG 检索到的【具体法律条文】驱动，而非通用模板。
         #   模型需要知道：违反了哪条法的哪一款 → 该款怎么规定的 → 原文哪里违例 → 怎么改才合规
         #
-        # Prompt 结构：法律依据(具体条款) → 违规对照(逐条指出) → 改写指令(依法修改)
+        # Prompt 结构：原条款 + 法律依据(压缩为约束条件) + 改写指令(强否定约束)
         violation_type_name = ID_TO_INDICATOR.get(request.violation_type, request.violation_type)
 
         # 直接复用函数开头已检索的 rag_legal（含 references 结构化列表），不重复调用 RAG
         legal_ref_list = rag_legal.get("references", [])
 
         if legal_ref_list:
-            # 有 RAG 结果：逐条列出检索到的法律条款，让模型看到具体依据
-            law_sections = []
+            # 有 RAG 结果：将法律条文提炼为「约束指令」而非大段引用
+            # 关键：不把法律正文塞给模型，而是告诉模型「法律要求什么」
+            law_constraints = []
             for ref in legal_ref_list:
                 ref_content = ref.get("content", "").strip()
                 if ref_content:
-                    # 每条法律截取前 150 字作为依据展示（保留完整语义）
-                    display_content = ref_content[:150] + ("..." if len(ref_content) > 150 else "")
-                    law_sections.append(
-                        f"- 《{ref['law']}》{ref['article']}：{display_content}"
+                    # 只取前 80 字，且加上「要求：」前缀，变成约束而非引文
+                    truncated = ref_content[:80] + ("..." if len(ref_content) > 80 else "")
+                    law_constraints.append(
+                        f"- 要求：{truncated}（来源：《{ref['law']}》{ref['article']}）"
                     )
-            legal_basis_detail = "\n".join(law_sections)
+            legal_basis_detail = "\n".join(law_constraints)
         else:
             # RAG 无结果时降级为静态配置
             static_ref = INDICATORS.get(violation_type_name, {}).get("legal_basis", "")
             static_hint = ID_TO_HINT.get(request.violation_type, "")
-            legal_basis_detail = f"- {static_ref}\n  要求：{static_hint}"
+            legal_basis_detail = f"- 要求：{static_ref}\n  合规要点：{static_hint}"
 
-        user_content = f"""# 你的任务
-根据下方给出的【具体法律条款】，对原条款进行精准修改。
-只输出修改后的最终文本，不要解释。
-
-# 原条款
+        user_content = f"""【原条款】
 {request.original_snippet}
 
-# 检测到的违规类型
-{violation_type_name}（{request.violation_type}）
-
-#──────────────────────────────────────────────#
-#   以下是你必须依据的法律条款（改写的唯一依据）   #
-#──────────────────────────────────────────────#
-
+【合规要求（法律规定的硬性约束，你必须满足这些要求）】
 {legal_basis_detail}
 
-#──────────────────────────────────────────────#
-#   违规对照：原条款哪里违反了上述法律           #
-#──────────────────────────────────────────────#
+【改写规则】
+1. 直接输出修改后的隐私政策正文，不要任何前缀、标题、编号、解释
+2. 删除违反上述要求的表述，保留不违规的部分
+3. 如果某项信息收集缺乏法律要求的必要说明，用最短的方式补上（不超过半句）
+4. 输出总字数严格控制在原文的 70% 以内
 
-请先自行判断（不输出）：
-1. 上述每条法律分别要求什么？
-2. 原条款中的哪些表述与这些要求冲突？
-3. 具体应该删除/修改/补充哪些内容？
+【禁止事项 — 违反以下任一条即为失败】
+- 禁止输出「根据XX法」「依照XX规定」「依据XX法第X条」等引用语
+- 禁止复述、概括、转述上述法律条文的内容
+- 禁止输出「修改说明」「改动理由」「对比分析」等解释性文字
+- 禁止输出 Markdown 格式标记（# * - > 等）
+- 禁止输出原标题或标注「改写后」「修订版」等标签
+- 禁止在正文之外输出任何其他内容"""
 
-# 改写要求
-1. **严格依据上述法律条款的要求进行修改**，每处改动都要能对应到某条法律的规定
-2. 删除法律明令禁止或不予许收集的信息项
-3. 将笼统表述改为符合法律要求的具体说明
-4. 如果法律要求某项要素而原文缺失，用最简短的方式补上（半句话以内）
-5. 输出篇幅 ≤ 原文的 80%，越精炼越好
-6. 语气平实直接，像真实互联网产品的隐私政策
-7. 禁止出现"根据XX法""依照XX规定"等引用语，禁止空话套话"""
-
-        system_content = "你是隐私政策文案编辑。你的每一处修改都必须有法律依据。直接输出改写后的文本。"
+        system_content = "你是一个只做不改说的文案编辑。你的唯一任务是：输入一段有法律问题的隐私政策条款，输出修改后的干净正文。像删除键一样工作——删掉问题的，保留没问题的。绝对不要解释、不要引用法律、不要加注释。只给结果。"
 
     # 调用 LLM 生成整改建议（兼容三种模式：github / local / hf）
     messages = [
@@ -804,7 +791,7 @@ async def rectify_snippet(
         response = llm_github.chat.completions.create(
             model=LLM_MODEL_ID,
             messages=messages,
-            max_tokens=512,
+            max_tokens=256,
             temperature=0.3,
         )
         suggested_text = response.choices[0].message.content.strip()
@@ -812,7 +799,7 @@ async def rectify_snippet(
         # 本地 GGUF 模式
         response = llm.create_chat_completion(
             messages=messages,
-            max_tokens=512,
+            max_tokens=256,
             temperature=0.3,
         )
         suggested_text = response["choices"][0]["message"]["content"].strip()
@@ -820,7 +807,7 @@ async def rectify_snippet(
         # HF Inference API 模式（fallback）
         response = llm.chat_completion(
             messages=messages,
-            max_tokens=512,
+            max_tokens=256,
             temperature=0.3,
         )
         suggested_text = response.choices[0].message.content.strip()
