@@ -640,11 +640,8 @@ async def rectify_snippet(
         # Prompt 结构：法律依据(具体条款) → 违规对照(逐条指出) → 改写指令(依法修改)
         violation_type_name = ID_TO_INDICATOR.get(request.violation_type, request.violation_type)
 
-        # 构建结构化的法律依据段落
-        # legal_references 是 RAG 检索到的完整列表，每条含 law/article/content
-        rag_refs = get_legal_basis_from_rag(request.violation_type, context=request.original_snippet)
-        legal_ref_list = rag_refs.get("references", [])
-        legal_text_content = rag_refs.get("content", "")
+        # 直接复用函数开头已检索的 rag_legal（含 references 结构化列表），不重复调用 RAG
+        legal_ref_list = rag_legal.get("references", [])
 
         if legal_ref_list:
             # 有 RAG 结果：逐条列出检索到的法律条款，让模型看到具体依据
