@@ -245,6 +245,12 @@ from src.mapper import map_to_12_classes
 # 创建快捷访问列表（保持向后兼容）
 INDICATOR_KEYS = list(INDICATORS.keys())
 
+# RoBERTa 11 类原始类别名称（与模型训练时输出维度一一对应）
+CLASS_NAMES = [
+    "数据收集", "权限获取", "共享转让", "使用目的", "存储方式",
+    "安全销毁", "特殊人群", "权限管理", "联系方式", "政策变更", "停止运营",
+]
+
 # ==========================================
 # Pydantic 数据模型定义 (Schema)
 # ==========================================
@@ -265,6 +271,7 @@ class AnalyzeResponse(BaseModel):
     score: float
     risk_level: str
     violations: List[dict]
+    sentence_results: List[dict] = Field(default_factory=list, description="每条句子的原始分类结果（测试集式明细）")
 
 class RectifyRequest(BaseModel):
     original_snippet: str
@@ -289,12 +296,20 @@ def split_into_sentences(text: str) -> List[str]:
     sentences = re.split(r'[。；\n]+', text)
     return [s.strip() for s in sentences if len(s.strip()) > 5]
 
-def roberta_predict(sentence: str) -> Dict[str, float]:
+def roberta_predict(sentence: str) -> Dict[str, Any]:
     """
     RoBERTa 预测：11 类模型输出 → 通过 mapper 映射到 12 类违规类型
 
-    返回格式: {violation_id: probability}
-    例如: {"I1": 0.82, "I4": 0.82}  (11类第0类"数据收集"映射到 I1+I4)
+    返回完整分类明细（供 sentence_results 展示）:
+    {
+        "mapped": {violation_id: probability},   # 映射后的违规ID及概率，如 {"I1": 0.82}
+        "raw_probs": [0.12, 0.85, ...],           # 11类原始sigmoid概率
+        "max_class_idx": 2,                        # 最高概率类别索引(0~10)
+        "max_prob": 0.85,                         # 最高类别概率值
+        "confidence": 3.42,                       # 置信度(logits最高-次高差值)
+        "class_name": "共享转让",                   # 最高类别中文名
+    }
+    无违规时 mapped 为空 {}
     """
     inputs = tokenizer_roberta(sentence, return_tensors="pt", truncation=True, max_length=150)
     with torch.no_grad():
@@ -321,12 +336,31 @@ def roberta_predict(sentence: str) -> Dict[str, float]:
     # 11 类 → 12 类违规 ID 多标签映射（置信度 + 概率双重约束）
     detected_ids = map_to_12_classes(probs, confidence=confidence)
 
-    if not detected_ids:
-        return {}
+    # 原始 11 类最高概率信息
+    max_idx = probs.index(max(probs)) if probs else -1
+    max_prob = max(probs) if probs else 0.0
 
     # 取最高概率作为映射结果的置信度
-    max_prob = max(probs) if probs else 0.0
-    return {vid: max_prob for vid in detected_ids}
+    mapped_result = {vid: max_prob for vid in detected_ids} if detected_ids else {}
+
+    # 日志：逐句分类明细（方便后端调试查看）
+    class_names = ["数据收集", "权限获取", "共享转让", "使用目的", "存储方式",
+                   "安全销毁", "特殊人群", "权限管理", "联系方式", "政策变更", "停止运营"]
+    logger.info(
+        f"句子: {sentence[:40]}{'...' if len(sentence)>40 else ''} "
+        f"| 类别: {class_names[max_idx] if 0 <= max_idx < len(class_names) else max_idx} "
+        f"| 概率: {max_prob:.4f} | 置信度: {confidence:.2f if confidence else 'N/A'} "
+        f"| 违规: {list(mapped_result.keys()) or '无'}"
+    )
+
+    return {
+        "mapped": mapped_result,
+        "raw_probs": [round(p, 6) for p in probs],
+        "max_class_idx": max_idx,
+        "max_prob": round(max_prob, 6),
+        "confidence": round(confidence, 4) if confidence is not None else None,
+        "class_name": CLASS_NAMES[max_idx] if 0 <= max_idx < len(CLASS_NAMES) else f"未知({max_idx})",
+    }
 
 def get_legal_basis_from_rag(violation_type: str, context: Optional[str] = None) -> Dict[str, str]:
     """
@@ -454,12 +488,27 @@ async def analyze(
     # violation_flags 改为按 violation_id（如 "I1", "I2"）标记，每种违规只扣一次
     violation_flags = {info["id"]: 0 for info in INDICATORS.values()}
     violations_list = []
+    # 每条句子的原始分类结果（测试集式明细）
+    sentence_results = []
 
-    for sentence in sentences:
-        # roberta_predict 现在返回 {violation_id: probability} 格式
-        # 例如: {"I1": 0.82, "I4": 0.82} （11类第0类"数据收集"映射到 I1+I4）
-        probs = roberta_predict(sentence)
-        for violation_id, prob in probs.items():
+    for idx, sentence in enumerate(sentences):
+        # roberta_predict 现在返回完整分类明细字典
+        pred = roberta_predict(sentence)
+
+        # 记录逐句原始分类结果
+        sentence_results.append({
+            "index": idx + 1,
+            "sentence": sentence,
+            "class_name": pred.get("class_name", ""),
+            "max_class_idx": pred.get("max_class_idx", -1),
+            "max_prob": pred.get("max_prob", 0),
+            "confidence": pred.get("confidence"),
+            "raw_probs": pred.get("raw_probs", []),
+            "detected_violations": list(pred.get("mapped", {}).keys()),
+        })
+
+        # 从 mapped 结果中提取违规（仅保留 prob > 0.5 的）
+        for violation_id, prob in pred.get("mapped", {}).items():
             if prob > 0.5:
                 violation_flags[violation_id] = 1
                 if not any(v["violation_id"] == violation_id for v in violations_list):
@@ -474,6 +523,7 @@ async def analyze(
                         "snippet": sentence,
                         "legal_basis": rag_legal["reference"],       # 引用格式，用于列表展示
                         "legal_detail": rag_legal["content"],         # 条文正文，供详情查看
+                        "confidence": round(prob, 4),                 # 分类置信度（恢复此字段）
                     })
 
     # violation_flags 现在以 violation_id (如 "I1") 为 key
@@ -509,7 +559,8 @@ async def analyze(
         "name": project.name,
         "score": project.score,
         "risk_level": project.risk_level,
-        "violations": violations_list
+        "violations": violations_list,
+        "sentence_results": sentence_results,       # 每条句子的原始分类明细
     }
 
 @app.post("/api/v1/rectify")
