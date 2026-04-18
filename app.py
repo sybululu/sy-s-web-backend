@@ -292,6 +292,87 @@ SCORE_THRESHOLD_HIGH_RISK = 40    # score < 40 → 高风险（40~70 中等风�
 # ==========================================
 # 辅助函数
 # ==========================================
+# 标题行正则模式（匹配后跳过 RoBERTa 分类，避免标题被误判为违规）
+_HEADING_PATTERNS = re.compile(
+    r'^('
+    # 中文序号标题: 一、/ 二、/ （一）/ 1\. / 1、/ 第[一二三四五六七八九十\d]+[章节条款部分]
+    r'[一二三四五六七八九十\d]+[\.\、\s]*(?:节|章|条款|部分|)'
+    r'|[一二三四五六七八九十]+[\.\、]'
+    # 英文/数字序号: 1. / 1) / (1)
+    r'|^\d+[\.\)\s]+'
+    # 常见隐私政策标题关键词（无实际行为的纯主题短语）
+    r'|^(?:信息收集|信息使用|信息共享|数据安全|用户权利|Cookie|未成年人|'
+    r'联系我们|政策更新|生效时间|适用范围|定义|总则|附则|修订记录'
+    r')'
+    # 纯标题短语（无谓语动词的名词串，≤20字且不含"我们/将/会/可以"等行为词）
+    r'|^.{2,20}$'
+    r')',
+    re.UNICODE
+)
+
+# 行为动词列表：句子中若包含这些词，说明是有实际内容的正文而非标题
+_ACTION_KEYWORDS = {'收集', '使用', '共享', '转让', '存储', '销毁', '删除', '访问',
+                   '查阅', '更正', '撤回', '同意', '授权', '告知', '提供', '保留',
+                   '处理', '获得', '采取', '发送', '接收', '加密', '匿名化',
+                   '分享', '公开', '披露', '出售', '允许', '承诺', '保证'}
+
+
+def is_likely_heading(sentence: str) -> bool:
+    """
+    判断一个句子是否为标题/小标题（非实质性条款内容）
+
+    标题特征：
+    1. 匹配常见标题格式（序号、章节名、纯主题短语）
+    2. 较短（≤30字）且不包含行为动词
+    3. 不含"我们/我方/本公司"等主体声明
+
+    Returns:
+        True → 是标题，应跳过分类
+        False → 是正文，需要分类
+    """
+    s = sentence.strip()
+
+    # 长度检查：过长的句子不太可能是标题
+    if len(s) > 35:
+        return False
+
+    # 强标题模式：序号开头 / 章节名 / 常见标题关键词 → 直接判定为标题
+    # 这些模式优先级最高，即使包含动作词也视为标题（如"一、信息收集"）
+    _STRONG_HEADING = re.compile(
+        r'^('
+        r'[一二三四五六七八九十]+[\.\、]'           # 一、/ 二、/
+        r'|[一二三四五六七八九十\d]+[\.\、\s]*(?:节|章|条款|部分)'  # 1.1 第一章
+        r'|^\d+[\.\)\s]+'                           # 1. / 1) /
+        r'|^(?:信息收集|信息使用|信息共享|数据安全|用户权利|Cookie|未成年人|'
+        r'联系我们|政策更新|生效时间|适用范围|定义|总则|附则|修订记录)'
+        r')',
+        re.UNICODE
+    )
+    if _STRONG_HEADING.match(s):
+        return True
+
+    # 包含行为动词 → 很可能是正文（标题一般只列主题不写动作）
+    has_action = any(kw in s for kw in _ACTION_KEYWORDS)
+
+    # 包含主体声明词 → 正文特征
+    has_subject = any(w in s for w in ('我们', '我方', '本公司', '本应用', '本平台',
+                                         '将', '会', '可以', '可能', '应当', '需要',
+                                         '用户', '您', '您的'))
+
+    if has_subject and has_action:
+        return False  # 有主体+有动作 = 正文
+
+    # 仅含行为动词（无明确主体）→ 也视为正文（如"用户有权查阅..."）
+    if has_action:
+        return False
+
+    # 弱标题模式：纯短文本（无动词无主体）
+    if _HEADING_PATTERNS.match(s):
+        return True
+
+    return False
+
+
 def split_into_sentences(text: str) -> List[str]:
     sentences = re.split(r'[。；\n]+', text)
     return [s.strip() for s in sentences if len(s.strip()) > 5]
@@ -508,6 +589,21 @@ async def analyze(
     sentence_results = []
 
     for idx, sentence in enumerate(sentences):
+        # 标题行过滤：跳过标题/小标题，避免被 RoBERTa 误判为违规
+        if is_likely_heading(sentence):
+            sentence_results.append({
+                "index": idx + 1,
+                "sentence": sentence,
+                "class_name": "[标题已跳过]",
+                "max_class_idx": -1,
+                "max_prob": 0,
+                "confidence": None,
+                "raw_probs": [],
+                "detected_violations": [],
+                "skipped_reason": "heading",
+            })
+            continue
+
         # roberta_predict 现在返回完整分类明细字典
         pred = roberta_predict(sentence)
 
