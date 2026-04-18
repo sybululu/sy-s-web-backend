@@ -344,12 +344,10 @@ def roberta_predict(sentence: str) -> Dict[str, Any]:
     mapped_result = {vid: max_prob for vid in detected_ids} if detected_ids else {}
 
     # 日志：逐句分类明细（方便后端调试查看）
-    class_names = ["数据收集", "权限获取", "共享转让", "使用目的", "存储方式",
-                   "安全销毁", "特殊人群", "权限管理", "联系方式", "政策变更", "停止运营"]
     logger.info(
         f"句子: {sentence[:40]}{'...' if len(sentence)>40 else ''} "
-        f"| 类别: {class_names[max_idx] if 0 <= max_idx < len(class_names) else max_idx} "
-        f"| 概率: {max_prob:.4f} | 置信度: {confidence:.2f if confidence else 'N/A'} "
+        f"| 类别: {CLASS_NAMES[max_idx] if 0 <= max_idx < len(CLASS_NAMES) else max_idx} "
+        f"| 概率: {max_prob:.4f} | 置信度: {f'{confidence:.2f}' if confidence is not None else 'N/A'} "
         f"| 违规: {list(mapped_result.keys()) or '无'}"
     )
 
