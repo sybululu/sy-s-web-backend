@@ -503,22 +503,132 @@ def roberta_predict(sentence: str) -> Dict[str, Any]:
 
 
 
+# ═══ 关键词熔断词表：命中则无视二分类结果，强制判定为违规 ═══
+# 覆盖：强制授权、模糊收集、超范围共享、无期限留存等典型流氓表述
+CIRCUIT_BREAKER_KEYWORDS = [
+    # 强制授权 / 默认同意
+    "默认勾选", "默认同意", "视为同意", "即表示同意", "注册即同意",
+    "使用本服务即视为", "一经注册", "自动视为",
+    # 超范围收集敏感数据
+    "生物识别", "指纹", "人脸识别", "虹膜", "步态", "基因", "DNA",
+    "健康数据", "医疗记录", "性生活", "性取向",
+    "宗教信仰", "政治倾向", "种族", "民族起源",
+    "通讯录", "联系人", "短信内容", "通话记录", "位置轨迹", "定位信息",
+    # 模糊目的收集
+    "提升体验", "优化服务", "改善产品", "业务需要", "必要的",
+    "为了更好地", "为您提供更优", "可能收集", "包括但不限于",
+    # 第三方共享无明确范围
+    "向第三方共享", "提供给合作伙伴", "允许第三方", "可能会分享",
+    "转交", "转让给", "披露给",
+    # 无明确期限
+    "永久保存", "无限期", "直至您删除", "在必要期间内保留",
+    "我们根据需要", "合理期限内",
+]
+
+# 二分类阈值配置
+BINARY_THRESHOLD_STRICT = 0.35    # 宁可错杀：risk_prob > 0.35 即判定为违规
+BINARY_FUZZY_LOW = 0.15           # 模糊地带下界：0.15 <= risk <= 0.35 → 送Phi-4二审
+
+
+def keyword_circuit_breaker(sentence: str) -> Optional[str]:
+    """
+    关键词熔断：扫描句子是否包含极其流氓的词汇。
+    
+    返回命中的关键词（如有），None 表示未命中。
+    命中时无论模型概率多低，都应强行判定为违规。
+    """
+    for kw in CIRCUIT_BREAKER_KEYWORDS:
+        if kw in sentence:
+            return kw
+    return None
+
+
+async def llm_judge_violation(sentence: str) -> bool:
+    """
+    LLM as Judge（二审法官）：对模糊地带句子用 Phi-4 判断是否违规。
+    
+    仅用于二分类模型不确定的边缘案例，不替代主流路径。
+    """
+    prompt = (
+        "你是一个隐私政策合规审查专家。请严格判断以下句子是否包含违规逻辑。\n"
+        "只回答"是"或"否"，不要解释。\n\n"
+        f"句子：{sentence}"
+    )
+    try:
+        if llm_github:
+            resp = llm_github.chat.completions.create(
+                model=LLM_MODEL_ID,
+                messages=[
+                    {"role": "system", "content": "你是隐私政策合规审查专家，只回答'是'或'否'。"},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=8,
+                temperature=0.1,
+            )
+            answer = resp.choices[0].message.content.strip()
+            result = "是" in answer or "违规" in answer or "yes" in answer.lower()
+            logger.info(f"[LLM二审] 句子: {sentence[:30]}... → {'⚠️违规' if result else '✅安全'} (原始回答: {answer})")
+            return result
+        elif llm:
+            resp = llm.chat_completion(
+                messages=[
+                    {"role": "system", "content": "你是隐私政策合规审查专家，只回答'是'或'否'。"},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=8,
+                temperature=0.1,
+            )
+            answer = str(resp).strip()
+            result = "是" in answer or "违规" in answer
+            logger.info(f"[LLM二审-HF] 句子: {sentence[:30]}... → {'⚠️违规' if result else '✅安全'}")
+            return result
+    except Exception as e:
+        logger.warning(f"[LLM二审] 调用失败，保守判定为违规: {e}")
+        return True  # 保守策略：LLM调用失败时不放过
+
+    # 无可用LLM时保守判定为违规
+    return True
+
+
 def binary_predict(sentence: str) -> Dict[str, Any]:
     """
-    二分类前置过滤：判断句子是否存在违规风险
-
-    模型输出 2 类 logits → softmax → 概率
-      - 类别 0: 无违规风险/余例 (safe)     ← binary_name.txt 第一行
-      - 类别 1: 有违规风险/正例 (violation) ← binary_name.txt 第二行
-
+    二分类前置过滤（增强版）：三重判断机制
+    
+    判定优先级（从高到低）：
+      1. 关键词熔断 → 直接违规（无视模型）
+      2. 模型高置信 → risk_prob > 0.35 直接违规
+      3. 模型低置信 → risk_prob < 0.15 直接安全
+      4. 模糊地带 → 0.15 <= risk_prob <= 0.35，标记送Phi-4二审
+    
     返回:
     {
-        "is_violation": bool,       # True=有违规风险(进入多分类), False=无违规(跳过)
+        "is_violation": bool,       # 最终判定
         "risk_prob": float,         # 类别1(正例/有违规)的概率
         "safe_prob": float,         # 类别0(余例/无违规)的概率
-        "logits": [float, float],   # 原始logits [类0, 类1]
+        "logits": [float, float],
+        "triggered_by": str,        # "keyword"/"model_high"/"model_low"/"fuzzy_llm"/"llm_safe"
+        "matched_keyword": str|None,# 熔断命中的关键词
+        "needs_llm_judge": bool,    # 是否需要Phi-4二审
     }
     """
+    # ── 第0关：关键词熔断（最高优先级）──
+    matched_kw = keyword_circuit_breaker(sentence)
+    if matched_kw:
+        logger.info(
+            f"[二分类-熔断] 句子: {sentence[:40]}{'...' if len(sentence)>40 else ''} "
+            f"| 命中关键词: '{matched_kw}' → ⚠️强制违规"
+        )
+        return {
+            "is_violation": True,
+            "risk_prob": 1.0,
+            "safe_prob": 0.0,
+            "logits": [0.0, 999.0],
+            "triggered_by": "keyword",
+            "matched_keyword": matched_kw,
+            "needs_llm_judge": False,
+        }
+
+    # ── 第1关：二分类模型推理 ──
     inputs = tokenizer_roberta(sentence, return_tensors="pt", truncation=True, max_length=150)
     with torch.no_grad():
         outputs = model_binary(**inputs)
@@ -527,7 +637,6 @@ def binary_predict(sentence: str) -> Dict[str, Any]:
         else:
             logits = outputs.logits.squeeze()
 
-        # 二分类用 softmax（互斥：有违规 / 无违规）
         probs = torch.softmax(logits, dim=-1).tolist()
 
     if not isinstance(probs, list):
@@ -536,19 +645,52 @@ def binary_predict(sentence: str) -> Dict[str, Any]:
     safe_prob = probs[0]   # 类别0: 余例/无违规风险
     risk_prob = probs[1]   # 类别1: 正例/有违规风险
 
-    # 默认阈值：risk_prob > 0.5 判定为有违规
-    is_violation = risk_prob > 0.5
+    # ── 第2关：三段式判定 ──
+    if risk_prob > BINARY_THRESHOLD_STRICT:
+        # 高置信违规区
+        logger.info(
+            f"[二分类-模型] 句子: {sentence[:40]}{'...' if len(sentence)>40 else ''} "
+            f"| 有违规={risk_prob:.4f} > 阈值{BINARY_THRESHOLD_STRICT} → ⚠️违规"
+        )
+        return {
+            "is_violation": True,
+            "risk_prob": round(risk_prob, 6),
+            "safe_prob": round(safe_prob, 6),
+            "logits": [round(l, 4) for l in (logits.tolist() if isinstance(logits, torch.Tensor) else logits)],
+            "triggered_by": "model_high",
+            "matched_keyword": None,
+            "needs_llm_judge": False,
+        }
 
+    if risk_prob < BINARY_FUZZY_LOW:
+        # 高置信安全区
+        logger.info(
+            f"[二分类-模型] 句子: {sentence[:40]}{'...' if len(sentence)>40 else ''} "
+            f"| 有违规={risk_prob:.4f} < 下界{BINARY_FUZZY_LOW} → ✅安全"
+        )
+        return {
+            "is_violation": False,
+            "risk_prob": round(risk_prob, 6),
+            "safe_prob": round(safe_prob, 6),
+            "logits": [round(l, 4) for l in (logits.tolist() if isinstance(logits, torch.Tensor) else logits)],
+            "triggered_by": "model_low",
+            "matched_keyword": None,
+            "needs_llm_judge": False,
+        }
+
+    # 模糊地带：标记需要Phi-4二审（由 analyze 循环异步调用）
     logger.info(
-        f"[二分类] 句子: {sentence[:40]}{'...' if len(sentence)>40 else ''} "
-        f"| 无违规={safe_prob:.4f} | 有违规={risk_prob:.4f} | 判定={'⚠️违规' if is_violation else '✅安全'}"
+        f"[二分类-模糊] 句子: {sentence[:40]}{'...' if len(sentence)>40 else ''} "
+        f"| 有违规={risk_prob:.4f} ∈ 模糊带[{BINARY_FUZZY_LOW}, {BINARY_THRESHOLD_STRICT}] → ⏳待LLM二审"
     )
-
     return {
-        "is_violation": is_violation,
+        "is_violation": False,          # 先标记为安全，等LLM结果后覆盖
         "risk_prob": round(risk_prob, 6),
         "safe_prob": round(safe_prob, 6),
         "logits": [round(l, 4) for l in (logits.tolist() if isinstance(logits, torch.Tensor) else logits)],
+        "triggered_by": "fuzzy_llm",
+        "matched_keyword": None,
+        "needs_llm_judge": True,         # 标记需要Phi-4二审
     }
 
 
@@ -741,24 +883,55 @@ async def analyze(
             })
             continue
 
-        # ═══ 第一阶段：二分类前置过滤（有/无违规风险）═══
+        # ═══ 第一阶段：二分类前置过滤（三重判断）═══
         binary_result = binary_predict(sentence)
+        triggered_by = binary_result.get("triggered_by", "unknown")
 
-        if not binary_result["is_violation"]:
-            # 二分类判定为"无违规" → 跳过多分类，直接记录为安全
+        # ── 模糊地带：Phi-4 二审法官 ──
+        if binary_result.get("needs_llm_judge"):
+            llm_verdict = await llm_judge_violation(sentence)
+            triggered_by = "llm_judge" if llm_verdict else "llm_safe"
+            
+            if not llm_verdict:
+                # LLM二审判定安全 → 跳过
+                sentence_results.append({
+                    "index": idx + 1,
+                    "sentence": sentence,
+                    "class_name": "[安全-LLM]",
+                    "max_class_idx": -1,
+                    "max_prob": 0,
+                    "confidence": None,
+                    "raw_probs": [],
+                    "detected_violations": [],
+                    "skipped_reason": "llm_safe",
+                    "binary_risk_prob": binary_result["risk_prob"],
+                    "binary_safe_prob": binary_result["safe_prob"],
+                    "triggered_by": triggered_by,
+                })
+                continue
+            # LLM二审判定违规 → 继续进入第二阶段多分类
+
+        if not binary_result["is_violation"] and not binary_result.get("needs_llm_judge"):
+            # 确实安全 → 跳过
+            skip_reason = {
+                "keyword": "熔断关键词" if binary_result.get("matched_keyword") else None,
+                "model_low": "模型高置信安全",
+            }.get(triggered_by, "binary_safe")
+            
             sentence_results.append({
                 "index": idx + 1,
                 "sentence": sentence,
-                "class_name": "[安全]",
+                "class_name": f"[{skip_reason}]",
                 "max_class_idx": -1,
                 "max_prob": 0,
                 "confidence": None,
                 "raw_probs": [],
                 "detected_violations": [],
-                "skipped_reason": "binary_safe",
-                # 二分类阶段信息
+                "skipped_reason": skip_reason,
                 "binary_risk_prob": binary_result["risk_prob"],
                 "binary_safe_prob": binary_result["safe_prob"],
+                "triggered_by": triggered_by,
+                "matched_keyword": binary_result.get("matched_keyword"),
             })
             continue
 
@@ -775,27 +948,33 @@ async def analyze(
             "confidence": pred.get("confidence"),
             "raw_probs": pred.get("raw_probs", []),
             "detected_violations": list(pred.get("mapped", {}).keys()),
-            # 二分类阶段信息
             "binary_risk_prob": binary_result["risk_prob"],
             "binary_safe_prob": binary_result["safe_prob"],
+            "triggered_by": triggered_by,
         })
 
-        # 从 mapped 结果中提取违规（仅保留 prob > 0.5 的）
-        # 每个句子的每个违规类型都独立记录，不去重
+        # 从 mapped 结果中提取违规（问题4: 不再需要prob>0.5过滤，直接取映射结果）
+        # 问题5: 按 (snippet, violation_id) 去重，避免同一句话重复同一标签
+        seen_violations_for_this_sentence = set()
         for violation_id, prob in pred.get("mapped", {}).items():
-            if prob > 0.5:
-                violation_flags[violation_id] = 1
-                indicator_name = ID_TO_INDICATOR.get(violation_id, "")
-                rag_legal = get_legal_basis_from_rag(violation_id, context=sentence)
-                violations_list.append({
-                    "indicator": indicator_name,
-                    "violation_id": violation_id,
-                    "snippet": sentence,
-                    "legal_basis": format_legal_paired(rag_legal),  # 配对格式
-                    "legal_detail": "",                             # 已合并到 legal_basis
-                    "legal_references": rag_legal.get("references", []),
-                    "confidence": round(prob, 4),
-                })
+            dedup_key = (sentence, violation_id)
+            if dedup_key in seen_violations_for_this_sentence:
+                continue
+            seen_violations_for_this_sentence.add(dedup_key)
+            
+            violation_flags[violation_id] = 1
+            indicator_name = ID_TO_INDICATOR.get(violation_id, "")
+            rag_legal = get_legal_basis_from_rag(violation_id, context=sentence)
+            violations_list.append({
+                "indicator": indicator_name,
+                "violation_id": violation_id,
+                "snippet": sentence,
+                "legal_basis": format_legal_paired(rag_legal),
+                "legal_detail": "",
+                "legal_references": rag_legal.get("references", []),
+                "confidence": round(prob, 4),
+                "triggered_by": triggered_by,
+            })
 
     # violation_flags 现在以 violation_id (如 "I1") 为 key
     penalty = sum(

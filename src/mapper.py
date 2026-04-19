@@ -57,28 +57,23 @@ VIOLATION_NAMES = {
 
 def map_to_12_classes(probs: List[float], confidence: float = None) -> List[str]:
     """
-    11类 → 12类 多标签映射
+    11类 → 12类 多标签映射（直接映射，无置信度/概率阈值过滤）
+    
+    前置二分类已负责"是否违规"的判断，此处只负责"是什么类型的违规"。
+    模型判断什么类型就映射为什么类型，不再做二次拦截。
     
     Args:
         probs: 11类概率向量 [p0, p1, ..., p10]
-        confidence: 可选的置信度（logits差值），用于替代概率阈值
+        confidence: 保留参数但不再使用（兼容接口）
         
     Returns:
-        违规ID列表（可能包含多个ID）
+        违规ID列表（可能包含多个ID），空列表表示无匹配类型
     """
     if not probs:
         return []
     
-    # 获取概率最高的类别索引
+    # 取概率最高的类别索引 → 直接映射（不过滤）
     max_idx = probs.index(max(probs))
-    max_prob = probs[max_idx]
-    
-    # 使用 confidence 和概率双重限制
-    if confidence is not None:
-        CONFIDENCE_THRESHOLD = 2.0
-        PROB_THRESHOLD = 0.6
-        if confidence < CONFIDENCE_THRESHOLD or max_prob < PROB_THRESHOLD:
-            return []
     
     # 多标签映射：一个 idx 可对应多个 violation ID
     target = ID_MAPPING.get(max_idx)
