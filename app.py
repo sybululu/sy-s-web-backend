@@ -106,7 +106,7 @@ class CustomBertMoeModel(nn.Module):
 
 
 def load_trained_model(ckpt_path: str) -> CustomBertMoeModel:
-    """加载微调 checkpoint 到自定义模型结构"""
+    """加载微调 checkpoint 到自定义模型结构（11类多分类）"""
     model = CustomBertMoeModel()
     state_dict = torch.load(ckpt_path, map_location="cpu", weights_only=True)
 
@@ -119,9 +119,45 @@ def load_trained_model(ckpt_path: str) -> CustomBertMoeModel:
     # strict=True：由于类结构与训练完全一致，所有键应精确匹配
     missing, unexpected = model.load_state_dict(cleaned_state_dict, strict=True)
     if missing:
-        logger.warning(f"RoBERTa 缺失键: {missing}")
+        logger.warning(f"RoBERTa 多分类 缺失键: {missing}")
     if unexpected:
-        logger.warning(f"RoBERTa 多余键: {unexpected}")
+        logger.warning(f"RoBERTa 多分类 多余键: {unexpected}")
+
+    model.eval()
+    return model
+
+
+# ─── 二分类模型：判断句子是否存在违规风险（有违规=1 / 无违规=0） ──
+# 训练代码结构与多分类完全相同，仅 num_classes=2（输出维度不同）
+class CustomBertBinaryModel(nn.Module):
+    """二分类模型：BertModel + fc(768→2)，用于前置过滤是否违规"""
+
+    def __init__(self):
+        super(CustomBertBinaryModel, self).__init__()
+        self.bert = BertModel.from_pretrained("hfl/chinese-roberta-wwm-ext")
+        # 二分类：num_classes=2，类别 0=无违规风险, 1=有违规风险
+        self.fc = nn.Linear(768, 2)
+
+    def forward(self, input_ids, attention_mask=None, **kwargs):
+        outputs = self.bert(input_ids, attention_mask=attention_mask)
+        pooled_output = outputs.pooler_output  # [batch, 768]
+        return self.fc(pooled_output)          # [batch, 2]
+
+
+def load_binary_model(ckpt_path: str) -> CustomBertBinaryModel:
+    """加载二分类 checkpoint"""
+    model = CustomBertBinaryModel()
+    state_dict = torch.load(ckpt_path, map_location="cpu", weights_only=True)
+
+    cleaned_state_dict = {
+        k.replace("model.", ""): v for k, v in state_dict.items()
+    }
+
+    missing, unexpected = model.load_state_dict(cleaned_state_dict, strict=True)
+    if missing:
+        logger.warning(f"RoBERTa 二分类 缺失键: {missing}")
+    if unexpected:
+        logger.warning(f"RoBERTa 二分类 多余键: {unexpected}")
 
     model.eval()
     return model
@@ -130,12 +166,22 @@ def load_trained_model(ckpt_path: str) -> CustomBertMoeModel:
 # 初始化 tokenizer 和自定义模型
 tokenizer_roberta = AutoTokenizer.from_pretrained("hfl/chinese-roberta-wwm-ext")
 
+# 1a. 加载 11 类多分类模型（第二阶段：判定违规类型）
 roberta_ckpt_path = hf_hub_download(
     repo_id="sybululu/bert-moe",
     filename="multi_classification_bertmoe.ckpt"
 )
 model_roberta = load_trained_model(roberta_ckpt_path)
-print("✅ RoBERTa 分类模型加载完成（CustomBertMoeModel + fc 分类头）")
+print("✅ RoBERTa 多分类模型加载完成（11类 → 12类违规类型映射）")
+
+# 1b. 加载二分类模型（第一阶段：判定是否有违规风险）
+binary_ckpt_path = hf_hub_download(
+    repo_id="sybululu/bert-moe",
+    filename="risk_identification_bertmoe.ckpt",
+    revision="06ef3d5e733870c99ee763eec552aea1d1a3f709"
+)
+model_binary = load_binary_model(binary_ckpt_path)
+print("✅ RoBERTa 二分类模型加载完成（有/无违规风险 前置过滤）")
 
 # 2. 加载整改生成模型（支持三种模式）
 llm = None           # type: ignore  # HF InferenceClient (hf 模式)
@@ -455,6 +501,57 @@ def roberta_predict(sentence: str) -> Dict[str, Any]:
         "class_name": CLASS_NAMES[max_idx] if 0 <= max_idx < len(CLASS_NAMES) else f"未知({max_idx})",
     }
 
+
+
+def binary_predict(sentence: str) -> Dict[str, Any]:
+    """
+    二分类前置过滤：判断句子是否存在违规风险
+
+    模型输出 2 类 logits → softmax → 概率
+      - 类别 0: 无违规风险 (safe)
+      - 类别 1: 有违规风险 (violation)
+
+    返回:
+    {
+        "is_violation": bool,       # True=有违规风险(进入多分类), False=无违规(跳过)
+        "risk_prob": float,         # 类别1(有违规)的概率
+        "safe_prob": float,         # 类别0(无违规)的概率
+        "logits": [float, float],   # 原始logits [类0, 类1]
+    }
+    """
+    inputs = tokenizer_roberta(sentence, return_tensors="pt", truncation=True, max_length=150)
+    with torch.no_grad():
+        outputs = model_binary(**inputs)
+        if isinstance(outputs, torch.Tensor):
+            logits = outputs.squeeze()
+        else:
+            logits = outputs.logits.squeeze()
+
+        # 二分类用 softmax（互斥：有违规 / 无违规）
+        probs = torch.softmax(logits, dim=-1).tolist()
+
+    if not isinstance(probs, list):
+        probs = [probs]
+
+    safe_prob = probs[0]   # 类别0: 无违规风险
+    risk_prob = probs[1]   # 类别1: 有违规风险
+
+    # 默认阈值：risk_prob > 0.5 判定为有违规
+    is_violation = risk_prob > 0.5
+
+    logger.info(
+        f"[二分类] 句子: {sentence[:40]}{'...' if len(sentence)>40 else ''} "
+        f"| 无违规={safe_prob:.4f} | 有违规={risk_prob:.4f} | 判定={'⚠️违规' if is_violation else '✅安全'}"
+    )
+
+    return {
+        "is_violation": is_violation,
+        "risk_prob": round(risk_prob, 6),
+        "safe_prob": round(safe_prob, 6),
+        "logits": [round(l, 4) for l in (logits.tolist() if isinstance(logits, torch.Tensor) else logits)],
+    }
+
+
 def get_legal_basis_from_rag(violation_type: str, context: Optional[str] = None) -> Dict[str, any]:
     """
     使用 RAG 检索获取法律依据（返回结构化数据：引用列表 + 正文列表）
@@ -644,10 +741,31 @@ async def analyze(
             })
             continue
 
-        # roberta_predict 现在返回完整分类明细字典
+        # ═══ 第一阶段：二分类前置过滤（有/无违规风险）═══
+        binary_result = binary_predict(sentence)
+
+        if not binary_result["is_violation"]:
+            # 二分类判定为"无违规" → 跳过多分类，直接记录为安全
+            sentence_results.append({
+                "index": idx + 1,
+                "sentence": sentence,
+                "class_name": "[安全]",
+                "max_class_idx": -1,
+                "max_prob": 0,
+                "confidence": None,
+                "raw_probs": [],
+                "detected_violations": [],
+                "skipped_reason": "binary_safe",
+                # 二分类阶段信息
+                "binary_risk_prob": binary_result["risk_prob"],
+                "binary_safe_prob": binary_result["safe_prob"],
+            })
+            continue
+
+        # ═══ 第二阶段：11类多分类 → 12类违规映射 ═══
         pred = roberta_predict(sentence)
 
-        # 记录逐句原始分类结果
+        # 记录逐句原始分类结果（含二分类信息）
         sentence_results.append({
             "index": idx + 1,
             "sentence": sentence,
@@ -657,6 +775,9 @@ async def analyze(
             "confidence": pred.get("confidence"),
             "raw_probs": pred.get("raw_probs", []),
             "detected_violations": list(pred.get("mapped", {}).keys()),
+            # 二分类阶段信息
+            "binary_risk_prob": binary_result["risk_prob"],
+            "binary_safe_prob": binary_result["safe_prob"],
         })
 
         # 从 mapped 结果中提取违规（仅保留 prob > 0.5 的）
