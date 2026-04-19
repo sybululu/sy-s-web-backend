@@ -508,14 +508,14 @@ def binary_predict(sentence: str) -> Dict[str, Any]:
     二分类前置过滤：判断句子是否存在违规风险
 
     模型输出 2 类 logits → softmax → 概率
-      - 类别 0: 无违规风险 (safe)
-      - 类别 1: 有违规风险 (violation)
+      - 类别 0: 有违规风险 (violation)   ← binary_name.txt 第一行
+      - 类别 1: 无违规风险 (safe)        ← binary_name.txt 第二行
 
     返回:
     {
         "is_violation": bool,       # True=有违规风险(进入多分类), False=无违规(跳过)
-        "risk_prob": float,         # 类别1(有违规)的概率
-        "safe_prob": float,         # 类别0(无违规)的概率
+        "risk_prob": float,         # 类别0(有违规)的概率
+        "safe_prob": float,         # 类别1(无违规)的概率
         "logits": [float, float],   # 原始logits [类0, 类1]
     }
     """
@@ -533,8 +533,8 @@ def binary_predict(sentence: str) -> Dict[str, Any]:
     if not isinstance(probs, list):
         probs = [probs]
 
-    safe_prob = probs[0]   # 类别0: 无违规风险
-    risk_prob = probs[1]   # 类别1: 有违规风险
+    risk_prob = probs[0]   # 类别0: 有违规风险
+    safe_prob = probs[1]   # 类别1: 无违规风险
 
     # 默认阈值：risk_prob > 0.5 判定为有违规
     is_violation = risk_prob > 0.5
