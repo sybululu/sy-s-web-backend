@@ -13,10 +13,12 @@ Token 分工：
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
 import logging
+import time
 import uuid
 from datetime import datetime
 from typing import List, Optional, Dict, Any
@@ -230,6 +232,277 @@ if LLM_MODE == "hf":
     # HF Inference API 模式（需 HF_TOKEN 有 Inference 权限，否则 403）
     llm = InferenceClient(model=LLM_MODEL_ID, token=HF_TOKEN or None)
     print(f"⚠️ 整改生成模型: HF Inference API 模式 (model={LLM_MODEL_ID}) — 需确保 Token 有 Inference 权限")
+
+# ==========================================
+# LLM 调用稳定性增强：统一包装器
+# ==========================================
+
+class LLMCallError(Exception):
+    """LLM 调用分类错误，携带可重试标志和错误码"""
+    def __init__(self, message: str, retryable: bool = True, error_code: str = "UNKNOWN",
+                 original_error: Optional[Exception] = None):
+        super().__init__(message)
+        self.retryable = retryable       # 是否应该重试
+        self.error_code = error_code      # 错误分类码
+        self.original_error = original_error
+
+
+def _classify_llm_error(err: Exception, context: str = "") -> LLMCallError:
+    """
+    将原始异常分类为可重试/不可重试，并赋予语义化错误码。
+
+    分类规则:
+      - 可重试 (retryable=True):  速率限制(429)、服务端错误(5xx)、超时、连接问题
+      - 不可重试 (retryable=False): 认证失败(401/403)、无效请求(400)、未知格式
+    """
+    err_msg = str(err).lower()
+    err_type = type(err).__name__
+
+    # ── OpenAI SDK 错误 (GitHub Models 模式) ──
+    if hasattr(err, 'status_code'):
+        status = err.status_code
+        if status == 429:
+            return LLMCallError(f"LLM 速率限制 ({context})", retryable=True,
+                                error_code="RATE_LIMIT", original_error=err)
+        elif status in (500, 502, 503, 504):
+            return LLMCallError(f"LLM 服务端错误 {status} ({context})", retryable=True,
+                                error_code="SERVER_ERROR", original_error=err)
+        elif status in (401, 403):
+            return LLMCallError(f"LLM 认证失败 {status} ({context})", retryable=False,
+                                error_code="AUTH_ERROR", original_error=err)
+        elif status == 400:
+            return LLMCallError(f"LLM 请求无效 ({context})", retryable=False,
+                                error_code="INVALID_REQUEST", original_error=err)
+
+    # ── HTTP 错误 (requests / urllib) ──
+    if "timeout" in err_type or "timed out" in err_msg or "timeout" in err_msg:
+        return LLMCallError(f"LLM 调用超时 ({context})", retryable=True,
+                            error_code="TIMEOUT", original_error=err)
+    if "connection" in err_type or "connection" in err_msg:
+        return LLMCallError(f"LLM 连接错误 ({context})", retryable=True,
+                            error_code="CONNECTION_ERROR", original_error=err)
+    if "ssl" in err_msg:
+        return LLMCallError(f"LLM SSL 错误 ({context})", retryable=False,
+                            error_code="SSL_ERROR", original_error=err)
+
+    # ── HuggingFace InferenceClient 特有错误 ──
+    if "403" in err_msg or "forbidden" in err_msg:
+        return LLMCallError(f"HF Inference 403 无权限 ({context})", retryable=False,
+                            error_code="AUTH_ERROR", original_error=err)
+    if "429" in err_msg or "rate" in err_msg:
+        return LLMCallError(f"HF Inference 速率限制 ({context})", retryable=True,
+                            error_code="RATE_LIMIT", original_error=err)
+    if "model overloaded" in err_msg or "overloaded" in err_msg:
+        return LLMCallError(f"模型过载 ({context})", retryable=True,
+                            error_code="OVERLOADED", original_error=err)
+    if "not found" in err_msg or "404" in err_msg:
+        return LLMCallError(f"模型不存在 ({context})", retryable=False,
+                            error_code="MODEL_NOT_FOUND", original_error=err)
+
+    # ── 兜底: 未知错误默认可重试一次 ──
+    return LLMCallError(f"LLM 未知错误 [{err_type}] ({context}): {err_msg}",
+                        retryable=True, error_code="UNKNOWN", original_error=err)
+
+
+# ── Circuit Breaker 状态 ──
+_circuit_breaker_failures = 0               # 连续失败计数
+_CIRCUIT_BREAKER_THRESHOLD = 5             # 连续失败 N 次后熔断
+_CIRCUIT_BREAKER_COOLDOWN = 60             # 熔断冷却时间（秒）
+_circuit_breaker_until: float = 0          # 熔断截止时间戳
+
+
+def _is_circuit_open() -> bool:
+    """检查熔断器是否打开（是否应跳过 LLM 调用）"""
+    global _circuit_breaker_until
+    if time.time() < _circuit_breaker_until:
+        return True
+    return False
+
+
+def _record_llm_success():
+    """记录 LLM 调用成功，重置熔断计数"""
+    global _circuit_breaker_failures, _circuit_breaker_until
+    _circuit_breaker_failures = 0
+    _circuit_breaker_until = 0
+
+
+def _record_llm_failure(classified_err: LLMCallError):
+    """记录 LLM 调用失败，更新熔断状态"""
+    global _circuit_breaker_failures, _circuit_breaker_until
+    if classified_err.retryable:
+        _circuit_breaker_failures += 1
+        if _circuit_breaker_failures >= _CIRCUIT_BREAKER_THRESHOLD:
+            _circuit_breaker_until = time.time() + _CIRCUIT_BREAKER_COOLDOWN
+            logger.warning(
+                f"[熔断器] LLM 连续失败 {_circuit_breaker_failures} 次，"
+                f"触发熔断 {_CIRCUIT_BREAKER_COOLDOWN}s"
+            )
+
+
+async def call_llm_with_retry(
+    messages: List[Dict[str, str]],
+    *,
+    max_tokens: int = 256,
+    temperature: float = 0.3,
+    max_retries: int = 3,
+    base_delay: float = 1.0,
+    timeout: float = 120.0,
+    caller: str = "unknown",
+) -> str:
+    """
+    统一 LLM 调用包装器 —— 带重试 + 错误分类 + 熔断 + 非阻塞。
+
+    功能:
+      1. 自动适配三种 LLM 模式 (github / local / hf)
+      2. 可重试错误自动指数退避重试 (最多 max_retries 次)
+      3. 不可重试错误立即抛出，不浪费时间
+      4. Circuit Breaker: 连续失败过多时跳过调用，快速返回降级结果
+      5. 使用 asyncio.to_thread() 避免阻塞 FastAPI 事件循环
+      6. 细粒度日志: 每次尝试都记录耗时和结果
+
+    Args:
+        messages: OpenAI 格式的 chat messages
+        max_tokens: 最大生成 token 数
+        temperature: 采样温度
+        max_retries: 最大重试次数 (仅对可重试错误)
+        base_delay: 首次重试等待秒数 (后续 ×2^attempt)
+        timeout: 单次调用的超时秒数
+        caller: 调用方标识 (用于日志，如 "llm_judge" / "rectify")
+
+    Returns:
+        模型生成的文本内容 (stripped)
+
+    Raises:
+        LLMCallError: 所有重试耗尽后的最终错误 (带 error_code)
+    """
+    # ── 熔断检查 ──
+    if _is_circuit_open():
+        remaining = _circuit_breaker_until - time.time()
+        logger.warning(f"[LLM-{caller}] ⛔ 熔断中，跳过调用 (剩余 {remaining:.0f}s)")
+        raise LLMCallError(
+            f"LLM 熔断中 (连续失败过多)，请 {remaining:.0f}s 后重试",
+            retryable=False, error_code="CIRCUIT_OPEN"
+        )
+
+    last_error: Optional[LLMCallError] = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            # ── 核心调用 (同步) → 放到线程池避免阻塞事件循环 ──
+            result_text = await asyncio.to_thread(
+                _llm_call_sync, messages, max_tokens, temperature, timeout, caller, attempt
+            )
+
+            # ── 成功: 重置熔断 ──
+            _record_llm_success()
+            logger.info(
+                f"[LLM-{caller}] ✅ 成功 (第{attempt+1}次尝试, "
+                f"输出长度: {len(result_text)} 字符)"
+            )
+            return result_text
+
+        except LLMCallError as e:
+            last_error = e
+            _record_llm_failure(e)
+
+            # 不可重试 → 立即终止
+            if not e.retryable:
+                logger.error(
+                    f"[LLM-{caller}] ❌ 不可重试错误 [{e.error_code}]: {e}"
+                )
+                raise
+
+            # 还有剩余重试次数 → 等待后重试
+            if attempt < max_retries:
+                delay = base_delay * (2 ** attempt)  # 1s → 2s → 4s
+                logger.warning(
+                    f"[LLM-{caller}] ⚠️ 第{attempt+1}次失败 [{e.error_code}], "
+                    f"{delay:.1f}s 后重试... (剩余 {max_retries - attempt} 次)"
+                )
+                await asyncio.sleep(delay)
+
+        except Exception as e:
+            # 未被 _classify_llm_error 覆盖的意外异常
+            last_error = _classify_llm_error(e, f"{caller}-unexpected")
+            logger.error(f"[LLM-{caller}] ❌ 未预期异常: {type(e).__name__}: {e}")
+            if attempt < max_retries and last_error.retryable:
+                delay = base_delay * (2 ** attempt)
+                await asyncio.sleep(delay)
+
+    # ── 所有重试耗尽 ──
+    logger.error(
+        f"[LLM-{caller}] ❌ 全部 {max_retries+1} 次尝试失败，"
+        f"最后错误: [{last_error.error_code if last_error else '?'}] {last_error}"
+    )
+    raise last_error or LLMCallError("所有重试均失败", error_code="EXHAUSTED")
+
+
+def _llm_call_sync(
+    messages: List[Dict[str, str]],
+    max_tokens: int,
+    temperature: float,
+    timeout: float,
+    caller: str,
+    attempt: int,
+) -> str:
+    """
+    同步 LLM 调用（由 asyncio.to_thread 调度，不阻塞事件循环）。
+    根据 LLM_MODE 分发到对应的后端实现。
+    """
+    start = time.monotonic()
+
+    try:
+        if LLM_MODE == "github" and llm_github is not None:
+            # GitHub Models: OpenAI SDK (同步阻塞)
+            resp = llm_github.chat.completions.create(
+                model=LLM_MODEL_ID,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                timeout=timeout,
+            )
+            text = resp.choices[0].message.content.strip()
+
+        elif LLM_MODE == "local" and hasattr(llm, 'create_chat_completion'):
+            # 本地 GGUF: llama-cpp-python (同步阻塞)
+            resp = llm.create_chat_completion(
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+            text = resp["choices"][0]["message"]["content"].strip()
+
+        elif LLM_MODE == "hf" and llm is not None:
+            # HF Inference API: InferenceClient (同步阻塞)
+            resp = llm.chat_completion(
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+            text = resp.choices[0].message.content.strip()
+
+        else:
+            raise LLMCallError(
+                f"无可用 LLM 后端 (mode={LLM_MODE}, github={'✓' if llm_github else '✗'}, "
+                f"hf={'✓' if llm else '✗'})",
+                retryable=False, error_code="NO_BACKEND"
+            )
+
+        elapsed = time.monotonic() - start
+        logger.debug(f"[LLM-{caller}] 同步调用完成 ({elapsed:.2f}s, attempt={attempt})")
+        return text
+
+    except LLMCallError:
+        raise  # 已分类的错误直接抛出
+    except Exception as e:
+        elapsed = time.monotonic() - start
+        classified = _classify_llm_error(e, f"{caller}-sync")
+        logger.debug(
+            f"[LLM-{caller}] 同步调用失败 ({elapsed:.2f}s, attempt={attempt}) "
+            f"[{classified.error_code}] {e}"
+        )
+        raise classified from e
+
 
 # ==========================================
 # RAG 组件初始化
@@ -546,48 +819,46 @@ def keyword_circuit_breaker(sentence: str) -> Optional[str]:
 async def llm_judge_violation(sentence: str) -> bool:
     """
     LLM as Judge（二审法官）：对模糊地带句子用 Phi-4 判断是否违规。
-    
+
     仅用于二分类模型不确定的边缘案例，不替代主流路径。
+    已接入统一包装器: 自动重试 + 熔断 + 非阻塞。
     """
     prompt = (
         "你是一个隐私政策合规审查专家。请严格判断以下句子是否包含违规逻辑。\n"
         '只回答"是"或"否"，不要解释。\n\n'
         f"句子：{sentence}"
     )
+    messages = [
+        {"role": "system", "content": "你是隐私政策合规审查专家，只回答'是'或'否'。"},
+        {"role": "user", "content": prompt}
+    ]
+
     try:
-        if llm_github:
-            resp = llm_github.chat.completions.create(
-                model=LLM_MODEL_ID,
-                messages=[
-                    {"role": "system", "content": "你是隐私政策合规审查专家，只回答'是'或'否'。"},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=8,
-                temperature=0.1,
-            )
-            answer = resp.choices[0].message.content.strip()
-            result = "是" in answer or "违规" in answer or "yes" in answer.lower()
-            logger.info(f"[LLM二审] 句子: {sentence[:30]}... → {'⚠️违规' if result else '✅安全'} (原始回答: {answer})")
-            return result
-        elif llm:
-            resp = llm.chat_completion(
-                messages=[
-                    {"role": "system", "content": "你是隐私政策合规审查专家，只回答'是'或'否'。"},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=8,
-                temperature=0.1,
-            )
-            answer = str(resp).strip()
-            result = "是" in answer or "违规" in answer
-            logger.info(f"[LLM二审-HF] 句子: {sentence[:30]}... → {'⚠️违规' if result else '✅安全'}")
-            return result
-    except Exception as e:
-        logger.warning(f"[LLM二审] 调用失败，保守判定为违规: {e}")
+        answer = await call_llm_with_retry(
+            messages,
+            max_tokens=8,
+            temperature=0.1,
+            max_retries=2,          # 二审是辅助判断，重试次数少一些
+            base_delay=0.5,         # 二审要求快，初始延迟短
+            timeout=30.0,           # 二审只需输出 1 个字，超时短
+            caller="llm_judge",
+        )
+        result = "是" in answer or "违规" in answer or "yes" in answer.lower()
+        logger.info(f"[LLM二审] 句子: {sentence[:30]}... → {'⚠️违规' if result else '✅安全'} (原始回答: {answer})")
+        return result
+
+    except LLMCallError as e:
+        if e.error_code == "CIRCUIT_OPEN":
+            logger.warning(f"[LLM二审] 熔断中跳过，保守判定为违规")
+        elif not e.retryable:
+            logger.warning(f"[LLM二审] 不可恢复错误 [{e.error_code}]，保守判定为违规: {e}")
+        else:
+            logger.warning(f"[LLM二审] 重试耗尽 [{e.error_code}]，保守判定为违规: {e}")
         return True  # 保守策略：LLM调用失败时不放过
 
-    # 无可用LLM时保守判定为违规
-    return True
+    except Exception as e:
+        logger.warning(f"[LLM二审] 未预期异常，保守判定为违规: {type(e).__name__}: {e}")
+        return True
 
 
 def binary_predict(sentence: str) -> Dict[str, Any]:
@@ -1162,38 +1433,30 @@ async def rectify_snippet(
             "改写标准：字少、事全、无废话、无法律引用。每句话必须有实质合规含义。"
             "绝对禁止在输出中出现任何法律名称、条文编号、条文原文或引用性表述。只输出改写后的条款正文。")
 
-    # 调用 LLM 生成整改建议（兼容三种模式：github / local / hf）
+    # 调用 LLM 生成整改建议（统一包装器: 重试 + 熔断 + 非阻塞）
     messages = [
         {"role": "system", "content": system_content},
         {"role": "user", "content": user_content}
     ]
 
-    if LLM_MODE == "github" and llm_github is not None:
-        # GitHub Models 模式（推荐）：OpenAI 兼容接口，免费 Phi-4
-        response = llm_github.chat.completions.create(
-            model=LLM_MODEL_ID,
-            messages=messages,
+    try:
+        suggested_text = await call_llm_with_retry(
+            messages,
             max_tokens=256,
             temperature=0.3,
+            max_retries=3,          # 整改是核心功能，多给重试机会
+            base_delay=1.5,         # 初始延迟稍长
+            timeout=120.0,          # 整改 prompt 长，超时给足
+            caller="rectify",
         )
-        suggested_text = response.choices[0].message.content.strip()
-    elif LLM_MODE == "local" and hasattr(llm, 'create_chat_completion'):
-        # 本地 GGUF 模式
-        response = llm.create_chat_completion(
-            messages=messages,
-            max_tokens=256,
-            temperature=0.3,
+    except LLMCallError as e:
+        # 所有重试耗尽或不可恢复 → 返回带错误信息的降级响应
+        logger.error(f"[rectify] LLM 调用最终失败 [{e.error_code}]: {e}")
+        raise HTTPException(
+            status_code=502 if e.retryable else 500,
+            detail=f"整改建议生成失败 ({e.error_code}): {str(e)[:200]}"
         )
-        suggested_text = response["choices"][0]["message"]["content"].strip()
-    else:
-        # HF Inference API 模式（fallback）
-        response = llm.chat_completion(
-            messages=messages,
-            max_tokens=256,
-            temperature=0.3,
-        )
-        suggested_text = response.choices[0].message.content.strip()
-    
+
     return {
         "suggested_text": suggested_text,
         "legal_basis": format_legal_paired(rag_legal),  # 配对格式：引用+正文一一对应
