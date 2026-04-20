@@ -1218,11 +1218,76 @@ async def fetch_url(
     import requests
     from bs4 import BeautifulSoup
     try:
-        response = requests.get(request.url, timeout=10)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        }
+        response = requests.get(request.url, headers=headers, timeout=15, allow_redirects=True)
         response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html.parser')
-        text = soup.get_text(separator='\n', strip=True)
+
+        # 编码检测（四层降级策略）：
+        # 1. 响应头 Content-Type 声明的 charset
+        # 2. requests 库自动检测的 encoding（排除 HTTP 默认的 iso-8859-1）
+        # 3. chardet/apparent_encoding 启发式检测
+        # 4. utf-8 兜底
+        content_type = response.headers.get('Content-Type', '')
+        enc = None
+
+        if 'charset=' in content_type.lower():
+            raw_enc = content_type.split('charset=')[-1].strip().lower()
+            # 排除 HTTP 默认值（iso-8859-1 / us-ascii），它们几乎总是错的
+            if raw_enc not in ('iso-8859-1', 'us-ascii', 'ascii'):
+                enc = raw_enc
+
+        if not enc and response.encoding and response.encoding.lower() not in ('iso-8859-1', 'us-ascii', 'ascii'):
+            enc = response.encoding
+
+        if not enc and response.apparent_encoding:
+            enc = response.apparent_encoding
+
+        if not enc:
+            enc = 'utf-8'
+
+        try:
+            text = response.content.decode(enc, errors='replace')
+        except Exception:
+            text = response.text
+
+        soup = BeautifulSoup(text, 'html.parser')
+
+        # 移除噪声标签：脚本、样式、导航、页脚等非正文内容
+        for tag in soup(['script', 'style', 'noscript', 'svg', 'nav', 'header', 'footer',
+                         'iframe', 'aside', 'form', 'button']):
+            tag.decompose()
+
+        raw_text = soup.get_text(separator='\n', strip=True)
+        # 清理多余空白行
+        lines = [line.strip() for line in raw_text.split('\n') if line.strip()]
+        text = '\n'.join(lines)
+
+        # SPA 空壳检测：文本过短且包含 JS 提示语，返回明确错误
+        spa_keywords = ['javascript enabled', 'enable javascript', '请启用 javascript']
+        is_spa_shell = (
+            len(text) < 500
+            and any(kw in text.lower() for kw in spa_keywords)
+        )
+        if is_spa_shell:
+            raise HTTPException(
+                status_code=422,
+                detail="该页面需要 JavaScript 渲染（SPA），无法通过静态抓取获取内容。"
+                        "建议直接粘贴文本或上传文件。"
+            )
+
         return {"text": text}
+    except HTTPException:
+        raise
+    except requests.exceptions.Timeout:
+        raise HTTPException(status_code=408, detail="请求超时（>15秒），请检查 URL 是否可访问或网络是否通畅。")
+    except requests.exceptions.SSLError as e:
+        raise HTTPException(status_code=422, detail=f"SSL 证书验证失败: {str(e)[:100]}")
+    except requests.exceptions.ConnectionError as e:
+        raise HTTPException(status_code=502, detail=f"无法连接到目标服务器: {str(e)[:100]}")
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"无法读取URL内容: {str(e)}")
 
