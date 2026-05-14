@@ -1554,6 +1554,23 @@ async def fetch_url(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"无法读取URL内容: {str(e)}")
 
+def count_unique_problem_snippets(result_json):
+    if not result_json:
+        return 0
+    try:
+        violations = json.loads(result_json)
+        if not isinstance(violations, list):
+            return 0
+        snippets = {
+            (v.get("snippet") or "").strip()
+            for v in violations
+            if isinstance(v, dict) and (v.get("snippet") or "").strip()
+        }
+        return len(snippets)
+    except Exception:
+        return 0
+
+
 @app.get("/api/v1/projects")
 async def get_projects(
     current_user: User = Depends(get_current_user),
@@ -1567,7 +1584,7 @@ async def get_projects(
             "score": p.score,
             "risk_level": p.risk_level,
             "created_at": p.created_at.isoformat(),
-            "clauseCount": len(json.loads(p.result_json)) if p.result_json else 0
+            "clauseCount": count_unique_problem_snippets(p.result_json)
         }
         for p in projects
     ]
