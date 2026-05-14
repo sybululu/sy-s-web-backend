@@ -1567,7 +1567,7 @@ async def get_projects(
             "score": p.score,
             "risk_level": p.risk_level,
             "created_at": p.created_at.isoformat(),
-            "clause_count": len(json.loads(p.result_json)) if p.result_json else 0
+            "clauseCount": len(json.loads(p.result_json)) if p.result_json else 0
         }
         for p in projects
     ]
