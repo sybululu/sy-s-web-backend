@@ -1,5 +1,5 @@
 """
-隐私政策合规审查 API
+智审合规 API
 整合了 RAG 架构的法律知识库检索
 
 整改生成模型支持三种模式（通过环境变量 LLM_MODE 切换）:
@@ -536,7 +536,7 @@ def initialize_rag():
 # ==========================================
 # FastAPI 应用设置
 # ==========================================
-app = FastAPI(title="隐私政策合规审查 API")
+app = FastAPI(title="智审合规 API")
 
 # CORS 配置（前端 Vite dev server 默认端口 5000，Cloudflare Pages 生产域名）
 app.add_middleware(
@@ -1566,7 +1566,8 @@ async def get_projects(
             "name": p.name,
             "score": p.score,
             "risk_level": p.risk_level,
-            "created_at": p.created_at.isoformat()
+            "created_at": p.created_at.isoformat(),
+            "clause_count": len(json.loads(p.result_json)) if p.result_json else 0
         }
         for p in projects
     ]
